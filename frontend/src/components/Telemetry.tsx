@@ -9,24 +9,26 @@ const EARTH_TONE: Record<string, string> = {
   banda_larga: 'text-ice-400', degradado: 'text-sky-300', emergencia: 'text-amber-300', los: 'text-slate-500',
 }
 
-function BodyLine({ icon, name, body, tone }: { icon: ReactNode; name: string; body: BodyAtPoint; tone: string }) {
+function BodyLine({ icon, name, body, tone, compact }: {
+  icon: ReactNode; name: string; body: BodyAtPoint; tone: string; compact?: boolean
+}) {
   return (
-    <div className="grid grid-cols-[16px_96px_56px_74px_1fr] items-baseline gap-x-2">
+    <div className={cx('grid items-baseline gap-x-2', compact ? 'grid-cols-[16px_96px_56px_1fr]' : 'grid-cols-[16px_96px_56px_74px_1fr]')}>
       <span className={cx('translate-y-0.5', tone)}>{icon}</span>
       <span className="text-slate-400">{name}</span>
       <span className="tabular text-right font-semibold text-slate-100">{signed(body.elevation_deg)}</span>
       <span className="tabular whitespace-nowrap text-slate-400">fração {fmt(body.fraction * 100, 0)}%</span>
-      <span className={cx('text-right whitespace-nowrap', tone)}>{body.label}</span>
+      <span className={cx(compact ? 'col-start-2 col-end-5 text-[11.5px]' : 'text-right whitespace-nowrap', tone)}>{body.label}</span>
     </div>
   )
 }
 
 /** Telemetria separada de Sol e Terra (usada no tooltip e na ficha do ponto). */
-export function TelemetryLines({ p }: { p: PointIllumination }) {
+export function TelemetryLines({ p, compact }: { p: PointIllumination; compact?: boolean }) {
   return (
     <div className="space-y-1 text-[12px]">
-      <BodyLine icon={<Sun className="size-3.5" />} name="Elevação solar" body={p.sun} tone={SUN_TONE[p.sun.level]} />
-      <BodyLine icon={<Antenna className="size-3.5" />} name="Elevação Terra" body={p.earth} tone={EARTH_TONE[p.earth.level]} />
+      <BodyLine icon={<Sun className="size-3.5" />} name="Elevação solar" body={p.sun} tone={SUN_TONE[p.sun.level]} compact={compact} />
+      <BodyLine icon={<Antenna className="size-3.5" />} name="Elevação Terra" body={p.earth} tone={EARTH_TONE[p.earth.level]} compact={compact} />
       <div className="flex items-baseline gap-2 border-t border-space-700 pt-1.5">
         <span className="text-slate-400">Status</span>
         <span className={cx('font-semibold', p.golden ? 'text-emerald-300' : 'text-slate-200')}>{p.status}</span>

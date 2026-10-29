@@ -1,7 +1,7 @@
 import { Antenna, Box, Clock, Columns2, Download, Gauge, Grid3x3, Info as InfoIcon, Map as MapIcon, Play, Sparkles, Sun, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { api, ServerUnavailableError } from '../lib/api'
-import type { Basemap, IlluminationMap, Info, MapMode, PointIllumination, Terrain } from '../lib/api'
+import type { Basemap, Countdown, IlluminationMap, Info, MapMode, PointIllumination, Terrain } from '../lib/api'
 import { addHours, fmt, mapToLatLon, signed, toUtcIso } from '../lib/geo'
 import { COLORS, decodeUint8, fillLayer, hatchLayer, stateMasks } from '../lib/layers'
 import { cx, initialViewState, type ViewState } from '../lib/view'
@@ -79,6 +79,9 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
   const [point, setPoint] = useState<PointIllumination | null>(null)
   const [pointLoading, setPointLoading] = useState(false)
   const [pointError, setPointError] = useState<string | null>(null)
+  const [countdown, setCountdown] = useState<Countdown | null>(null)
+  const [countdownLoading, setCountdownLoading] = useState(false)
+  const countdownCtrl = useRef<AbortController | null>(null)
   const utcRef = useRef(utc)
   useEffect(() => { utcRef.current = utc }, [utc])
   const tooltip = useHoverTelemetry(utcRef, onServerDown)
@@ -89,11 +92,27 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
     else set(e instanceof Error ? e.message : String(e))
   }, [onServerDown])
 
+  const queryCountdown = useCallback(async (lat: number, lon: number) => {
+    countdownCtrl.current?.abort() // clique em outro ponto cancela a busca anterior
+    const ctrl = new AbortController()
+    countdownCtrl.current = ctrl
+    setCountdown(null)
+    setCountdownLoading(true)
+    try {
+      setCountdown(await api.countdown(toUtcIso(utcRef.current), lat, lon, ctrl.signal))
+    } catch (e) {
+      if (!(e instanceof DOMException)) handleError(e, setPointError)
+    } finally {
+      if (!ctrl.signal.aborted) setCountdownLoading(false)
+    }
+  }, [handleError])
+
   const queryPoint = useCallback(async (x_m: number, y_m: number) => {
     setPointXY({ x_m, y_m })
     setPointLoading(true)
     setPointError(null)
     const { lat, lon } = mapToLatLon(x_m, y_m)
+    void queryCountdown(lat, lon)
     try {
       setPoint(await api.point(toUtcIso(utcRef.current), lat, lon))
     } catch (e) {
@@ -102,7 +121,7 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
     } finally {
       setPointLoading(false)
     }
-  }, [handleError])
+  }, [handleError, queryCountdown])
 
   const run = useCallback(async (when = utcRef.current) => {
     setLoading(true)
@@ -155,7 +174,11 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
           <SectionLabel>1 · Instante (UTC)</SectionLabel>
           <input type="datetime-local" step={1} value={utc} onChange={(e) => setUtc(e.target.value)}
                  className="tabular w-full rounded-lg border border-space-700 bg-space-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sun-400" />
-          <div className="mt-2 grid grid-cols-4 gap-1.5">
+          <div className="mt-2 grid grid-cols-5 gap-1.5">
+            <button onClick={() => setUtc(new Date().toISOString().slice(0, 19))} disabled={loading} title="Usar o instante atual (UTC)"
+                    className="rounded-md border border-sun-400/40 bg-space-900 py-1.5 text-xs text-sun-300 transition hover:border-sun-400 disabled:opacity-40">
+              Agora
+            </button>
             {[[-24, '−1 dia'], [-6, '−6 h'], [6, '+6 h'], [24, '+1 dia']].map(([h, label]) => (
               <button key={label} onClick={() => step(h as number)} disabled={loading}
                       className="rounded-md border border-space-700 bg-space-900 py-1.5 text-xs text-slate-300 transition hover:border-sun-400 hover:text-sun-300 disabled:opacity-40">
@@ -213,7 +236,8 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
           </Card>
         )}
 
-        {pointXY && <PointCard point={point} loading={pointLoading} error={pointError} />}
+        {pointXY && <PointCard point={point} loading={pointLoading} error={pointError} countdown={countdown}
+                               countdownLoading={countdownLoading} simulatedUtc={utc} />}
 
         <Card title="Como ler o mapa" icon={<InfoIcon className="size-4" />}>
           <ul className="space-y-2.5 text-[12.5px] leading-relaxed text-slate-300">

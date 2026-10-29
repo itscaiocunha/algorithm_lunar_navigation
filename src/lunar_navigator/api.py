@@ -119,6 +119,20 @@ def api_illumination(
     return _call(_service().point, utc, lat, lon, _annual(year))
 
 
+@app.get("/api/countdown")
+def api_countdown(
+    utc: str = Query(..., examples=["2026-11-20T00:00:00Z"]),
+    lat: float = Query(..., ge=-90, le=-80, examples=[-89.45]),
+    lon: float = Query(..., ge=-360, le=360, examples=[-137.1]),
+) -> dict:
+    """Contagem regressiva no pixel: próximo pôr/nascer do Sol e LOS/AOS (e degradação) da Terra.
+
+    Varredura de 1 h por até 60 dias + bisseção (scipy) com tolerância de 1 s sobre
+    f(t) = elevação − horizonte(azimute) ± raio do disco.
+    """
+    return _call(_service().countdown, utc, lat, lon)
+
+
 @app.get("/api/map")
 def api_map(
     utc: str = Query(..., examples=["2026-11-20T00:00:00Z"]),

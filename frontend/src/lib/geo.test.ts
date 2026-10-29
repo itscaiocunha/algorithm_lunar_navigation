@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addHours, latLonToMap, mapToLatLon, toUtcIso } from './geo'
+import { addHours, latLonToMap, mapToLatLon, tMinus, toUtcIso } from './geo'
 
 describe('projeção polar estereográfica', () => {
   it('polo sul fica na origem', () => {
@@ -31,5 +31,13 @@ describe('datas UTC', () => {
   })
   it('soma horas atravessando o dia', () => {
     expect(addHours('2026-11-20T18:00:00', 12)).toBe('2026-11-21T06:00:00')
+  })
+})
+
+describe('contagem regressiva', () => {
+  it('formata em horas totais e minutos', () => {
+    expect(tMinus(72 * 3600 + 15 * 60)).toBe('T− 72h 15m')
+    expect(tMinus(9 * 3600 + 30 * 60 + 29)).toBe('T− 09h 30m')
+    expect(tMinus(-5)).toBe('T− 00h 00m')
   })
 })

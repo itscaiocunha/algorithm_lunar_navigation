@@ -20,6 +20,7 @@ const VALIDATION: [string, string][] = [
   ['Elevação/azimute da Terra vs. rotina azlcpo do CSPICE', 'diferença < 10⁻⁹°'],
   ['Horizontes com teto da Terra vs. motor direto (Terra a até 7,5°)', '≥ 98% dos pixels com |Δfração| < 0,05'],
   ['Janela de ouro: 60% de Sol coincidente vence 80% desencontrado', 'teste automatizado'],
+  ['Eventos da contagem regressiva vs. ray-casting direto (±2 min)', 'troca de estado confirmada'],
   ['Testes automatizados (Python + TypeScript)', 'pytest + vitest'],
 ]
 
@@ -101,6 +102,19 @@ pior apagão = max(maior noite contínua, maior LOS contínuo)`}
           com a maior janela (17,5 d, mas 19,5 d de escuridão) cai para +0,26; o líder passa a ser o pico de 83,8% de Sol com
           apenas 6 dias de noite (+0,59). Com A = 1 e B = C = 0, a pontuação reproduz exatamente o ranking só por janela. Os pesos
           podem ser ajustados ao vivo na aba Análise anual (re-ranqueamento de 562 500 pixels em ~0,2 s).
+        </p>
+      </Section>
+
+      <Section title="Contagem regressiva (T-minus)">
+        <p>
+          Ao clicar num pixel, o servidor procura o próximo pôr ou nascer do Sol e o próximo LOS/AOS da Terra. Primeiro faz uma
+          varredura de hora em hora (até 60 dias) com o perfil de horizonte do pixel; a primeira mudança de estado isola o evento
+          numa janela de 1 h, e a bisseção do scipy encontra a raiz de f(t) = elevação − horizonte(azimute) ± raio do disco.
+        </p>
+        <p className="mt-3">
+          A raiz é refinada pelo ray-casting exato, não pela interpolação do perfil: perto do polo o Sol quase não sobe (0,003°/h) — ele
+          desliza de lado (0,5°/h) atrás de um relevo denteado, e a interpolação a cada 2° chegou a errar um nascer em 2,3 h. A
+          incerteza física exibida (±6 min no Sol, ±45 min na Terra) vem do relevo de 80 m, não da bisseção.
         </p>
       </Section>
 

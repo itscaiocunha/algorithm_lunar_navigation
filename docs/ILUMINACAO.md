@@ -280,6 +280,44 @@ Os pesos podem ser ajustados ao vivo: `GET /api/annual?a=1&b=1&c=2` re-ranqueia 
 Vários dos melhores locais ficam perto de 88,8°S, 120–124°E, a mesma região
 do ponto mais iluminado apontado por Bussey et al. (2010), 88,74°S, 124,5°E.
 
+# Contagem regressiva (`countdown.py`, `GET /api/countdown`)
+
+Para um pixel e um instante t0, calcula o tempo até o próximo pôr ou nascer do
+Sol e até o próximo LOS/AOS da Terra, além do início ou fim da degradação de RF
+(disco da Terra parcialmente oculto).
+
+**Função de margem** (graus, contínua no tempo):
+`f(t) = elevação(t) − horizonte(azimute(t)) ± raio do disco`, com `+` para "alguma
+parte visível" (nascer/pôr, AOS/LOS) e `−` para "disco inteiro" (degradação de RF).
+
+**Algoritmo:**
+
+1. **Varredura grossa** a cada 1 h, por até 60 dias, com o perfil de horizonte do
+   pixel: 180 azimutes calculados sob demanda em ~0,2 s e guardados em cache,
+   então funciona em qualquer ponto do DEM.
+2. A **primeira troca de sinal** isola o evento numa janela de 1 h.
+3. **Refinamento exato:** o ray-casting na direção real do alvo confirma a troca. Se
+   ela caiu fora da janela, a janela se expande hora a hora, até ±6 h. Depois disso,
+   `scipy.optimize.bisect` encontra a raiz com tolerância de 5 s.
+
+**Por que o passo 3 existe.** Perto do polo o Sol quase não muda de elevação
+(0,003°/h, medido); o pôr acontece porque ele **desliza** lateralmente (0,51°/h)
+atrás do relevo. O perfil interpola o horizonte a cada 2° e "apara" entalhes e
+picos estreitos: num teste em −89,9°, 0°, o nascer do Sol saía em 13,7 h, contra
+16 h do ray-casting direto. Com o refinamento exato, o resultado é 15,94 h.
+
+**Precisão.** A raiz vale para o modelo com tolerância de 5 s, mas o modelo tem
+incerteza física. Um erro de 0,05° no horizonte (relevo de 80 m) equivale a ~6 min
+no Sol e a ~45 min na Terra, que se move só ~0,07°/h. A API devolve essa incerteza
+em `uncertainty_min`. Bisectar até milissegundos seria precisão falsa.
+
+**Validação** (`tests/test_countdown.py`): para cada evento, o ray-casting direto
+confirma a troca de estado entre −2 min e +2 min. O perfil sob demanda reproduz o
+cache de horizontes (|Δ| < 0,01°). Raízes sintéticas e o caso de janela expandida
+também são testados.
+
+**Custo:** ~0,7–1,5 s por clique, quase todo nos ray-castings exatos do refinamento.
+
 # API e dashboard
 
 ```powershell
@@ -290,6 +328,7 @@ uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
 |---|---|---|
 | `GET /` | Dashboard web (build de `frontend/`) | — |
 | `GET /api/illumination?utc=2026-11-20T00:00:00Z&lat=-89.9&lon=0` | Telemetria do pixel: Sol e Terra (fração, elevação, azimute, horizonte, nível de energia/enlace, atraso de sinal), status e estatística anual | ~0,3 s |
+| `GET /api/countdown?utc=...&lat=...&lon=...` | Tempo até o próximo pôr/nascer do Sol, LOS/AOS e degradação de RF da Terra (segundos, UTC, incerteza) e fim da Zona de Ouro | ~0,7–1,5 s |
 | `GET /api/map?utc=...&modo=completo` | PNG do Sol + frações cruas do Sol e da Terra (uint8 base64) + direções + estatísticas dos 4 estados | ~30 s (2 ray-castings) |
 | `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,5 s |
 | `GET /api/map?utc=...&formato=geotiff` | GeoTIFF de 3 bandas: `sun_fraction`, `earth_fraction`, `golden_zone` | — |

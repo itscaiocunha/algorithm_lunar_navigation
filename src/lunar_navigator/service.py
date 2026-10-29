@@ -20,7 +20,7 @@ from rasterio.transform import from_origin
 from spiceypy.utils.exceptions import SpiceyError
 
 from lunar_navigator import annual as annual_mod
-from lunar_navigator import config, ephemeris, horizon, illumination, link, render, terrain
+from lunar_navigator import config, countdown, ephemeris, horizon, illumination, link, render, terrain
 from lunar_navigator.ephemeris import EARTH, EARTH_RADIUS_M, SUN, SUN_RADIUS_M
 
 _spice_lock = threading.Lock()
@@ -76,6 +76,7 @@ class LunarService:
             self.hmap.geometry()  # pré-aquece (pontos 3D e base local)
         self.basemap_rgb = render.basemap_rgb(self.area.heights, self.area.pixel)
         self._map_cache: OrderedDict = OrderedDict()
+        self._profile_cache: OrderedDict = OrderedDict()  # perfis de horizonte por pixel (countdown)
 
     # --- Tempo e efemérides ------------------------------------------------
     @staticmethod
@@ -165,6 +166,34 @@ class LunarService:
         if annual:
             out["annual"] = self.annual_at(annual, out["x_m"], out["y_m"])
         return out
+
+    # --- Contagem regressiva --------------------------------------------------
+    def countdown(self, utc: str, lat: float, lon: float) -> dict:
+        """Tempo até o próximo pôr/nascer do Sol e LOS/AOS da Terra no pixel (varredura 1 h + bisseção)."""
+        t0 = time.perf_counter()
+        et, iso = self.parse_utc(utc)
+        pixel = self.latlon_to_pixel(lat, lon)
+        key = (pixel.x0, pixel.y0)
+        profile = self._profile_cache.get(key)
+        if profile is None:
+            profile = countdown.PixelHorizon.compute(self.dem, pixel.surface_points().reshape(3))
+            self._profile_cache[key] = profile
+            while len(self._profile_cache) > 256:
+                self._profile_cache.popitem(last=False)
+        radii = {SUN: SUN_RADIUS_M, EARTH: EARTH_RADIUS_M}
+
+        def exact(et_k: float, target: str) -> tuple[float, float]:
+            """Margens pelo ray-casting exato do pixel (sinal confiável; usado só no refinamento)."""
+            res = illumination.compute_illumination(pixel, self.dem, ephemeris.body_position_m(et_k, target), radii[target])
+            elev, hor = float(res.elevation_deg.item()), float(res.horizon_deg.item())
+            dist = np.linalg.norm(ephemeris.body_position_m(et_k, target) - pixel.surface_points().reshape(3))
+            r = float(np.degrees(np.arcsin(radii[target] / dist)))
+            return elev - hor + r, elev - hor - r
+
+        with _spice_lock:
+            result = countdown.countdown(et, profile, exact)
+        return {"utc": iso, "lat": lat, "lon": lon, "x_m": pixel.x0 + pixel.pixel / 2, "y_m": pixel.y0 - pixel.pixel / 2,
+                **result, "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
     # --- Malha ----------------------------------------------------------------
     def compute_map(self, utc: str, mode: str = "completo", half_size_m: float = config.HALF_SIZE_M) -> MapResult:

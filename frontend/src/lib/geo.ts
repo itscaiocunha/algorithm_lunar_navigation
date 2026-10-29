@@ -44,3 +44,11 @@ export function addHours(local: string, hours: number): string {
 export function signed(value: number, digits = 2): string {
   return `${value >= 0 ? '+' : '−'}${fmt(Math.abs(value), digits)}°`
 }
+
+/** Contagem regressiva no formato tático: "T− 72h 15m" (horas totais, sem dias). */
+export function tMinus(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds / 60))
+  const h = Math.floor(total / 60)
+  const m = total % 60
+  return `T− ${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m`
+}

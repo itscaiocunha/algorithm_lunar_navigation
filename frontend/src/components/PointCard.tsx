@@ -1,23 +1,37 @@
 import { Crosshair } from 'lucide-react'
-import type { PointIllumination } from '../lib/api'
+import type { ReactNode } from 'react'
+import type { Countdown, PointIllumination } from '../lib/api'
+import { CountdownPanel } from './CountdownPanel'
 import { fmt, signed } from '../lib/geo'
 import { TelemetryLines } from './Telemetry'
 import { Card, KeyValue } from './ui'
 
-export function PointCard({ point, loading, error }: { point: PointIllumination | null; loading: boolean; error: string | null }) {
+export function PointCard({ point, loading, error, countdown, countdownLoading, simulatedUtc }: {
+  point: PointIllumination | null
+  loading: boolean
+  error: string | null
+  countdown: Countdown | null
+  countdownLoading: boolean
+  simulatedUtc: string
+}) {
   return (
     <Card title="Ponto selecionado" icon={<Crosshair className="size-4" />}>
       {error && <p className="text-sm text-rose-300">{error}</p>}
       {loading && !point && <p className="text-sm text-slate-500">Traçando os raios até o Sol e a Terra…</p>}
-      {point && <PointBody point={point} />}
+      {point && (
+        <PointBody point={point}>
+          <CountdownPanel data={countdown} loading={countdownLoading} simulatedUtc={simulatedUtc} />
+        </PointBody>
+      )}
     </Card>
   )
 }
 
-function PointBody({ point: p }: { point: PointIllumination }) {
+function PointBody({ point: p, children }: { point: PointIllumination; children: ReactNode }) {
   return (
     <div className="space-y-3">
-      <TelemetryLines p={p} />
+      <TelemetryLines p={p} compact />
+      {children}
       <KeyValue rows={[
         ['Lat / lon', `${fmt(p.lat, 4)}° / ${fmt(p.lon, 2)}°`],
         ['Altitude', `${fmt(p.height_m, 0)} m`],

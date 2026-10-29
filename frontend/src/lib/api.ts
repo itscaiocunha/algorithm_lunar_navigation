@@ -105,6 +105,37 @@ export interface PointIllumination {
   annual?: AnnualAtPoint | null
 }
 
+export type CountdownEventName = 'sunset' | 'sunrise' | 'los' | 'aos' | 'degradation' | 'full_signal'
+
+export interface CountdownEvent {
+  event: CountdownEventName
+  seconds: number // a partir do instante simulado
+  utc: string
+  exact: boolean // raiz confirmada pelo ray-casting exato
+}
+
+export interface BodyCountdown {
+  state: 'full' | 'partial' | 'hidden'
+  margin_deg: number
+  event: CountdownEventName | null // evento principal (para a Terra visível: LOS)
+  seconds: number | null
+  utc: string | null
+  events: CountdownEvent[]
+  searched_days: number
+  uncertainty_min: number
+}
+
+export interface Countdown {
+  utc: string
+  lat: number
+  lon: number
+  sun: BodyCountdown
+  earth: BodyCountdown
+  golden: boolean
+  golden_ends_seconds?: number | null
+  elapsed_ms: number
+}
+
 export interface Peak {
   rank: number
   score: number
@@ -184,6 +215,8 @@ export const api = {
   map: (utc: string, modo: MapMode) => get<IlluminationMap>('/api/map', { utc, modo }),
   point: (utc: string, lat: number, lon: number, signal?: AbortSignal) =>
     get<PointIllumination>('/api/illumination', { utc, lat, lon }, signal),
+  countdown: (utc: string, lat: number, lon: number, signal?: AbortSignal) =>
+    get<Countdown>('/api/countdown', { utc, lat, lon }, signal),
   annual: (year: number, metric: AnnualMetric, w: Weights) => get<Annual>('/api/annual', { year, metric, ...w }),
 }
 
