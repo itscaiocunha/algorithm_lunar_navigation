@@ -1,6 +1,6 @@
 import { Line, OrbitControls, useTexture } from '@react-three/drei'
-import { Canvas, type ThreeEvent } from '@react-three/fiber'
-import { Suspense, useEffect, useMemo } from 'react'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Suspense, useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { BodyDirection, Terrain } from '../lib/api'
 import { decodeHeights } from '../lib/api'
@@ -21,6 +21,7 @@ interface Props {
   sun?: BodyDirection
   earth?: BodyDirection
   marker?: { x_m: number; y_m: number } | null
+  focus?: { x_m: number; y_m: number; key: number; overview?: boolean } | null // muda `key` para voar; overview = visão geral
   onClickMap?: (x_m: number, y_m: number) => void
 }
 
@@ -80,7 +81,7 @@ function TerrainMesh({ terrain, baseUrl, layers, exaggeration, onClickMap }: Pro
 }
 
 /** Seta tracejada do centro até o corpo; a elevação é ampliada (×3) só para ficar legível. */
-function BodyIndicator({ body, radiusKm, color, size }: { body: BodyDirection; radiusKm: number; color: string; size: number }) {
+export function BodyIndicator({ body, radiusKm, color, size }: { body: BodyDirection; radiusKm: number; color: string; size: number }) {
   const [dx, dy] = body.map_dir
   const dir = new THREE.Vector3(dx, 0, -dy).normalize()
   const above = body.elevation_deg > 0
@@ -96,6 +97,48 @@ function BodyIndicator({ body, radiusKm, color, size }: { body: BodyDirection; r
       </mesh>
     </group>
   )
+}
+
+/** Altura da cena (km, já exagerada) no ponto do mapa, a partir da malha de altitudes. */
+function sceneHeight(terrain: Terrain, heights: Float32Array, x_m: number, y_m: number, exaggeration: number): number {
+  const [rows, cols] = terrain.shape
+  const b = terrain.bounds
+  const c = Math.round(((x_m - b.x_min) / (b.x_max - b.x_min)) * (cols - 1))
+  const r = Math.round(((b.y_max - y_m) / (b.y_max - b.y_min)) * (rows - 1))
+  if (r < 0 || r >= rows || c < 0 || c >= cols) return 0
+  return ((heights[r * cols + c] - (terrain.min_m + terrain.max_m) / 2) / 1000) * exaggeration
+}
+
+/** Leva o alvo da OrbitControls e a câmera até o ponto, com interpolação suave (~1 s). */
+function FocusController({ terrain, focus, exaggeration }: { terrain: Terrain; focus: NonNullable<Props['focus']>; exaggeration: number }) {
+  const controls = useThree((s) => s.controls) as unknown as { target: THREE.Vector3; update: () => void } | null
+  const camera = useThree((s) => s.camera)
+  const heights = useMemo(() => decodeHeights(terrain), [terrain])
+  const goal = useRef<{ target: THREE.Vector3; position: THREE.Vector3; frames: number } | null>(null)
+  useEffect(() => {
+    const size = (terrain.bounds.x_max - terrain.bounds.x_min) / 1000
+    if (focus.overview) {
+      goal.current = { target: new THREE.Vector3(0, 0, 0), position: new THREE.Vector3(-size * 0.1, size * 0.8, size * 0.95), frames: 60 }
+      return
+    }
+    const h = sceneHeight(terrain, heights, focus.x_m, focus.y_m, exaggeration)
+    const target = new THREE.Vector3(focus.x_m / 1000, h, -focus.y_m / 1000)
+    // a câmera fica sempre acima do pico mais alto da malha: alvos no fundo de crateras
+    // (ex.: −2,5 km × 3 de exagero) deixariam a câmera abaixo das paredes, olhando para a sombra
+    const top = ((terrain.max_m - (terrain.min_m + terrain.max_m) / 2) / 1000) * exaggeration
+    const position = target.clone().add(new THREE.Vector3(-5, 0, 14))
+    position.y = Math.max(target.y + 10, top + 6)
+    goal.current = { target, position, frames: 60 }
+  }, [focus.key, focus.x_m, focus.y_m, focus.overview, terrain, heights, exaggeration])
+  useFrame(() => {
+    const g = goal.current
+    if (!g || !controls) return
+    controls.target.lerp(g.target, 0.12)
+    camera.position.lerp(g.position, 0.12)
+    controls.update()
+    if (--g.frames <= 0) goal.current = null
+  })
+  return null
 }
 
 function Marker({ x_m, y_m, terrain, exaggeration }: { x_m: number; y_m: number; terrain: Terrain; exaggeration: number }) {
@@ -129,13 +172,14 @@ export function Terrain3D(props: Props) {
         {/* a Terra parece ~4× maior que o Sol no céu lunar */}
         {earth && <BodyIndicator body={earth} radiusKm={size * 0.5} color="#40c8ff" size={2.2} />}
         {props.marker && <Marker {...props.marker} terrain={terrain} exaggeration={props.exaggeration} />}
+        {props.focus && <FocusController terrain={terrain} focus={props.focus} exaggeration={props.exaggeration} />}
         <OrbitControls makeDefault target={[0, 0, 0]} maxPolarAngle={Math.PI / 2.05} minDistance={8} maxDistance={size * 2.5} enableDamping />
       </Canvas>
     </div>
   )
 }
 
-function BodyLegend({ color, name, elevation }: { color: string; name: string; elevation: number }) {
+export function BodyLegend({ color, name, elevation }: { color: string; name: string; elevation: number }) {
   return (
     <div className="flex items-center gap-2">
       <span className={`size-2.5 rounded-full shadow-[0_0_8px] ${color}`} />

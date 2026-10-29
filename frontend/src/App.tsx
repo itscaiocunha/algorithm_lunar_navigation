@@ -73,7 +73,7 @@ export default function App() {
         ) : (
           <>
             <div className={cx('h-full', tab !== 'instant' && 'hidden')}>
-              <InstantView info={info} basemap={basemap} terrain={terrain} requestTerrain={requestTerrain} onServerDown={setOffline} />
+              <InstantView info={info} basemap={basemap} onServerDown={setOffline} />
             </div>
             {tab === 'annual' && (
               <AnnualView year={info.annual_years.at(-1) ?? 2027} basemap={basemap} terrain={terrain} requestTerrain={requestTerrain} />

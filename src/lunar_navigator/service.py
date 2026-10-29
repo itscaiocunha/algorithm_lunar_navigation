@@ -20,7 +20,7 @@ from rasterio.transform import from_origin
 from spiceypy.utils.exceptions import SpiceyError
 
 from lunar_navigator import annual as annual_mod
-from lunar_navigator import config, countdown, ephemeris, horizon, illumination, link, render, terrain
+from lunar_navigator import config, countdown, ephemeris, horizon, illumination, link, render, terrain, tiles
 from lunar_navigator.ephemeris import EARTH, EARTH_RADIUS_M, SUN, SUN_RADIUS_M
 
 _spice_lock = threading.Lock()
@@ -77,6 +77,7 @@ class LunarService:
         self.basemap_rgb = render.basemap_rgb(self.area.heights, self.area.pixel)
         self._map_cache: OrderedDict = OrderedDict()
         self._profile_cache: OrderedDict = OrderedDict()  # perfis de horizonte por pixel (countdown)
+        self.tiles = tiles.TileGrid(config.DEM_PATH, self.dem.radius)  # quadtree LOD da vista 3D
 
     # --- Tempo e efemérides ------------------------------------------------
     @staticmethod
@@ -166,6 +167,56 @@ class LunarService:
         if annual:
             out["annual"] = self.annual_at(annual, out["x_m"], out["y_m"])
         return out
+
+    # --- Tiles (quadtree LOD) ----------------------------------------------------
+    def _tile_call(self, fn, *args):
+        try:
+            return fn(*args)
+        except ValueError as exc:
+            raise InputError(str(exc)) from exc
+
+    def tile_heights(self, z: int, x: int, y: int) -> bytes:
+        return self._tile_call(self.tiles.heights, z, x, y).astype("<f4").tobytes()
+
+    def tile_relief(self, z: int, x: int, y: int) -> bytes:
+        return self._tile_call(self.tiles.relief_png, z, x, y)
+
+    def _area_fractions(self, et: float, iso: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """Frações do Sol e da Terra na área inteira pelo mapa de horizontes (~0,4 s, cache por instante)."""
+        if self.hmap is None:
+            return None
+        cache = self.__dict__.setdefault("_area_fraction_cache", OrderedDict())
+        if iso not in cache:
+            sun_m, earth_m = self.body_m(et, SUN), self.body_m(et, EARTH)
+            cache[iso] = (self.hmap.illumination(sun_m), self.hmap.earth_visibility(earth_m))
+            while len(cache) > 8:
+                cache.popitem(last=False)
+        return cache[iso]
+
+    def tile_analytic(self, z: int, x: int, y: int, utc: str, layers: tuple[bool, bool, bool]) -> bytes:
+        """Sol + Terra + Zona de Ouro do tile no instante, com cache.
+
+        Tile inteiro dentro da área com cache de horizontes: amostra o mapa de horizontes (O(1), o mesmo
+        método do mapa 2D). Fora dela: ray-casting direto das células contra o DEM de 80 m.
+        """
+        et, iso = self.parse_utc(utc)
+        sun_m, earth_m = self.body_m(et, SUN), self.body_m(et, EARTH)
+        a = self.bounds(self.area)
+
+        def fractions(cells: terrain.DEM):
+            inside = (cells.x0 >= a["x_min"] and cells.x0 + cells.shape[1] * cells.pixel <= a["x_max"]
+                      and cells.y0 <= a["y_max"] and cells.y0 - cells.shape[0] * cells.pixel >= a["y_min"])
+            area_fr = self._area_fractions(et, iso) if inside else None
+            if area_fr is not None:
+                xs, ys = cells.pixel_centers()
+                col = np.clip(((xs - self.area.x0) // self.area.pixel).astype(int), 0, self.area.shape[1] - 1)
+                row = np.clip(((self.area.y0 - ys) // self.area.pixel).astype(int), 0, self.area.shape[0] - 1)
+                return area_fr[0][row, col], area_fr[1][row, col]
+            sun = illumination.compute_illumination(cells, self.dem, sun_m, SUN_RADIUS_M).fraction
+            earth = illumination.compute_illumination(cells, self.dem, earth_m, EARTH_RADIUS_M).fraction
+            return sun, earth
+
+        return self._tile_call(self.tiles.analytic_png, z, x, y, iso, fractions, layers)
 
     # --- Contagem regressiva --------------------------------------------------
     def countdown(self, utc: str, lat: float, lon: float) -> dict:

@@ -119,6 +119,35 @@ def api_illumination(
     return _call(_service().point, utc, lat, lon, _annual(year))
 
 
+@app.get("/api/tiles/meta")
+def api_tiles_meta() -> dict:
+    """Grade quadtree do DEM: origem, tamanho, células por tile, nível máximo."""
+    return _service().tiles.meta()
+
+
+_TILE_CACHE = {"Cache-Control": "public, max-age=86400"}  # relevo e alturas não mudam
+
+
+@app.get("/api/tiles/{z}/{x}/{y}/heights")
+def api_tile_heights(z: int, x: int, y: int) -> Response:
+    """(tile_cells+1)² alturas em metros, Float32 little-endian, linha a linha de norte para sul (NaN fora do DEM)."""
+    return Response(_call(_service().tile_heights, z, x, y), media_type="application/octet-stream", headers=_TILE_CACHE)
+
+
+@app.get("/api/tiles/{z}/{x}/{y}/relief.png")
+def api_tile_relief(z: int, x: int, y: int) -> Response:
+    """Relevo sombreado do tile (PNG RGBA, transparente fora do DEM)."""
+    return Response(_call(_service().tile_relief, z, x, y), media_type="image/png", headers=_TILE_CACHE)
+
+
+@app.get("/api/tiles/{z}/{x}/{y}/analytic.png")
+def api_tile_analytic(z: int, x: int, y: int, utc: str = Query(...), sun: bool = True, earth: bool = True,
+                      golden: bool = True) -> Response:
+    """Sol (inferno) + Terra só-rádio (hachura) + Zona de Ouro (verde) do tile no instante dado."""
+    png = _call(_service().tile_analytic, z, x, y, utc, (sun, earth, golden))
+    return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+
+
 @app.get("/api/countdown")
 def api_countdown(
     utc: str = Query(..., examples=["2026-11-20T00:00:00Z"]),

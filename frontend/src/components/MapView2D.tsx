@@ -33,7 +33,7 @@ export interface MapPoint {
 }
 
 const VIEW = new OrthographicView({ id: 'map', flipY: false, controller: true })
-const LAT_RINGS = [-89.75, -89.5, -89.25, -89.0]
+const LAT_RINGS = [-89.75, -89.5, -89.25, -89.0, -88, -87, -86, -85]  // anéis largos aparecem ao afastar o zoom
 const MERIDIANS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
 
 function graticule(showGrid: boolean): Layer[] {
@@ -46,7 +46,7 @@ function graticule(showGrid: boolean): Layer[] {
     }),
   }))
   const meridians = MERIDIANS.map((lon) => {
-    const p = latLonToMap(-88.9, lon)
+    const p = latLonToMap(-84.6, lon)
     return { lon, from: [0, 0] as [number, number], to: [p.x / 1000, p.y / 1000] as [number, number] }
   })
   return [
@@ -60,7 +60,7 @@ function graticule(showGrid: boolean): Layer[] {
     }),
     new TextLayer({
       id: 'lat-labels', data: rings, getPosition: (d) => { const p = latLonToMap(d.lat, 45); return [p.x / 1000, p.y / 1000] },
-      getText: (d) => `${fmt(-d.lat, 2)}°S`, getSize: 10, getColor: [200, 210, 230, 150], fontFamily: 'Inter, Segoe UI, sans-serif', characterSet: 'auto',
+      getText: (d) => `${fmt(-d.lat, d.lat % 1 === 0 ? 0 : 2)}°S`, getSize: 10, getColor: [200, 210, 230, 150], fontFamily: 'Inter, Segoe UI, sans-serif', characterSet: 'auto',
       background: true, getBackgroundColor: [7, 9, 14, 170], backgroundPadding: [3, 1],
     }),
     new TextLayer({

@@ -1,4 +1,5 @@
 // Cliente tipado da API FastAPI (src/lunar_navigator/api.py).
+import type { TileMeta } from './quadtree'
 
 export interface Bounds {
   x_min: number
@@ -225,4 +226,8 @@ export function decodeHeights(t: Terrain): Float32Array {
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
   return new Float32Array(bytes.buffer)
+}
+
+export const tilesApi = {
+  meta: () => get<TileMeta>('/api/tiles/meta'),
 }

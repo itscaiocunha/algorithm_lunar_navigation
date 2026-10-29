@@ -73,7 +73,10 @@ python scripts\servidor.py     # sobe a API e abre http://127.0.0.1:8000 no nave
 
 - **Iluminação num instante:** Sol (energia), Terra (rádio, hachura) e Zona de Ouro em 2D (deck.gl),
   Energia × Rádio lado a lado e relevo 3D (React Three Fiber); tooltip com a telemetria do pixel.
-- **Análise anual:** Sol, visada para a Terra, Zona de Ouro e candidatos a pouso pela maior janela contínua.
+  Clique num pixel (ou escolha um alvo Artemis III/CLPS no catálogo) para a telemetria e a contagem
+  regressiva T− até o próximo pôr do Sol e a próxima perda de sinal (LOS).
+- **Análise anual:** Sol, visada para a Terra, Zona de Ouro e candidatos a pouso por pontuação composta
+  (janela de ouro, fração de ouro e pior apagão), com pesos ajustáveis ao vivo.
 - **Metodologia:** pipeline, validação e limitações.
 
 O modo rápido e a aba anual exigem rodar `scripts/mapa_anual.py` uma vez (gera os caches).

@@ -1,15 +1,19 @@
-import { Antenna, Box, Clock, Columns2, Download, Gauge, Grid3x3, Info as InfoIcon, Map as MapIcon, Play, Sparkles, Sun, Zap } from 'lucide-react'
+import { Antenna, Box, Clock, Columns2, Download, Gauge, Grid3x3, Info as InfoIcon, Layers, Map as MapIcon, Play, Sparkles, Sun, Zap } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { api, ServerUnavailableError } from '../lib/api'
-import type { Basemap, Countdown, IlluminationMap, Info, MapMode, PointIllumination, Terrain } from '../lib/api'
-import { addHours, fmt, mapToLatLon, signed, toUtcIso } from '../lib/geo'
+import { api, ServerUnavailableError, tilesApi } from '../lib/api'
+import type { Basemap, Countdown, IlluminationMap, Info, MapMode, PointIllumination } from '../lib/api'
+import type { TileMeta } from '../lib/quadtree'
+import { addHours, fmt, latLonToMap, mapToLatLon, signed, toUtcIso } from '../lib/geo'
+import { CUSTOM_ID, findPreset } from '../lib/presets'
 import { COLORS, decodeUint8, fillLayer, hatchLayer, stateMasks } from '../lib/layers'
 import { cx, initialViewState, type ViewState } from '../lib/view'
 import { LoadingNarrative } from './LoadingNarrative'
+import { MissionPresetPicker } from './MissionPresetPicker'
 import { MapView2D, type HoverEvent, type Overlay } from './MapView2D'
 import { PointCard } from './PointCard'
 import { EngineeringTooltip } from './Telemetry'
-import { Terrain3D, type TextureLayer } from './Terrain3D'
+import type { LodStats } from './QuadtreeTerrain'
+import { TerrainLOD3D, type LodFocus } from './TerrainLOD3D'
 import { Card, Kpi, Segmented, SectionLabel } from './ui'
 
 type ViewMode = '2d' | 'compare' | '3d'
@@ -54,11 +58,9 @@ function useHoverTelemetry(utcRef: RefObject<string>, onServerDown: (r: string) 
   return { hover, setHover, data, loading }
 }
 
-export function InstantView({ info, basemap, terrain, requestTerrain, onServerDown }: {
+export function InstantView({ info, basemap, onServerDown }: {
   info: Info
   basemap: Basemap
-  terrain: Terrain | null
-  requestTerrain: () => void
   onServerDown: (reason: string) => void
 }) {
   const [utc, setUtc] = useState('2026-11-20T00:00:00')
@@ -82,6 +84,11 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
   const [countdown, setCountdown] = useState<Countdown | null>(null)
   const [countdownLoading, setCountdownLoading] = useState(false)
   const countdownCtrl = useRef<AbortController | null>(null)
+  const [presetId, setPresetId] = useState(CUSTOM_ID)
+  const [focus3d, setFocus3d] = useState<LodFocus | null>(null)
+  const [tileMeta, setTileMeta] = useState<TileMeta | null>(null)
+  const [lodStats, setLodStats] = useState<LodStats | null>(null)
+  const [debugLevels, setDebugLevels] = useState(false)
   const utcRef = useRef(utc)
   useEffect(() => { utcRef.current = utc }, [utc])
   const tooltip = useHoverTelemetry(utcRef, onServerDown)
@@ -114,14 +121,43 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
     const { lat, lon } = mapToLatLon(x_m, y_m)
     void queryCountdown(lat, lon)
     try {
-      setPoint(await api.point(toUtcIso(utcRef.current), lat, lon))
+      const p = await api.point(toUtcIso(utcRef.current), lat, lon)
+      setPoint(p)
+      return p
     } catch (e) {
       setPoint(null)
       handleError(e, setPointError)
+      return null
     } finally {
       setPointLoading(false)
     }
   }, [handleError, queryCountdown])
+
+  /** Clique manual no mapa: a coordenada passa a ser "personalizada". */
+  const clickMap = useCallback((x_m: number, y_m: number) => {
+    setPresetId(CUSTOM_ID)
+    void queryPoint(x_m, y_m)
+  }, [queryPoint])
+
+  /** Alvo do catálogo (ou coordenada digitada): consulta a API e centraliza as câmeras 2D e 3D. */
+  const goTo = useCallback(async (id: string, lat: number, lon: number) => {
+    setPresetId(id)
+    const { x, y } = latLonToMap(lat, lon)
+    const pointPromise = queryPoint(x, y)
+    const b = basemap.bounds
+    const inside = x >= b.x_min && x <= b.x_max && y >= b.y_min && y <= b.y_max
+    const heightPx = window.innerHeight - 190
+    if (inside) {
+      setViewState({ target: [x / 1000, y / 1000, 0], zoom: Math.log2((heightPx * 0.9) / 16) }) // ~16 km de campo
+    } else {
+      // fora da malha renderizada: enquadra a malha e o ponto juntos
+      const span = 2 * Math.max(Math.abs(x), Math.abs(y), b.x_max) / 1000 + 20
+      setViewState({ target: [x / 2000, y / 2000, 0], zoom: Math.log2((heightPx * 0.9) / span) })
+    }
+    // o voo 3D usa a altitude real do ponto (telemetria), válida em qualquer lugar do DEM
+    const p = await pointPromise
+    setFocus3d((f) => ({ x_m: x, y_m: y, h_m: p?.height_m ?? 0, key: (f?.key ?? 0) + 1 }))
+  }, [queryPoint, basemap.bounds])
 
   const run = useCallback(async (when = utcRef.current) => {
     setLoading(true)
@@ -144,27 +180,30 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
     if (map && !loading) void run(next)
   }
 
-  useEffect(() => { if (view === '3d') requestTerrain() }, [view, requestTerrain])
+  useEffect(() => {
+    if (view === '3d' && !tileMeta) tilesApi.meta().then(setTileMeta).catch((e) => handleError(e, setError))
+  }, [view, tileMeta, handleError])
 
   const b = map?.bounds ?? basemap.bounds
+  const pointLatLon = pointXY ? mapToLatLon(pointXY.x_m, pointXY.y_m) : null
+  const preset = findPreset(presetId)
   const base: Overlay = { id: 'base', image: basemap.image, bounds: basemap.bounds }
   const sunLayer: Overlay[] = map && showSun ? [{ id: 'sun', image: map.image, bounds: b, opacity: sunOpacity }] : []
   const hatchLayer2d: Overlay[] = layers && showEarth ? [{ id: 'hatch', image: layers.hatch, bounds: b, smooth: true }] : []
   const goldenLayer: Overlay[] = layers && showGolden ? [{ id: 'golden', image: layers.golden, bounds: b }] : []
-  const marker = pointXY ? [{ id: 'sel', ...pointXY, color: [125, 255, 122] as [number, number, number], selected: true }] : []
+  const marker = pointXY ? [{ id: 'sel', ...pointXY, color: [125, 255, 122] as [number, number, number], selected: true,
+                               label: preset.id !== CUSTOM_ID ? preset.name.replace(/^(Artemis III|CLPS): /, '') : undefined }] : []
   const expected = mode === 'rapido' ? 0.8 : lastFullSeconds
   const geotiffUrl = map && `/api/map?${new URLSearchParams({ utc: map.utc, modo: map.mode, formato: 'geotiff' })}`
 
-  const textureLayers: TextureLayer[] = [
-    ...(map && showSun ? [{ url: map.image, alpha: 0.8 }] : []),
-    ...(layers && showEarth ? [{ url: layers.hatch, alpha: 1 }] : []),
-    ...(layers && showGolden ? [{ url: layers.golden, alpha: 1 }] : []),
-  ]
+  const analyticSpec = map && (showSun || showEarth || showGolden)
+    ? { utc: map.utc, sun: showSun, earth: showEarth, golden: showGolden } : null
+  const marker3d = pointXY && point ? { ...pointXY, h_m: point.height_m } : null
 
   const tip = tooltip.hover && (
     <EngineeringTooltip point={tooltip.data} loading={tooltip.loading} x={tooltip.hover.screenX} y={tooltip.hover.screenY} />
   )
-  const mapProps = { viewState, onViewStateChange: setViewState, onClickMap: queryPoint, onHoverMap: tooltip.setHover,
+  const mapProps = { viewState, onViewStateChange: setViewState, onClickMap: clickMap, onHoverMap: tooltip.setHover,
                      showGrid: grid, points: marker }
 
   return (
@@ -203,6 +242,12 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
             <Play className="size-4 fill-current" /> {loading ? 'Calculando…' : 'Calcular Sol + Terra'}
           </button>
           {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
+        </Card>
+
+        <Card>
+          <SectionLabel>3 · Alvo de missão</SectionLabel>
+          <MissionPresetPicker key={pointXY ? `${pointXY.x_m},${pointXY.y_m}` : 'none'} selectedId={presetId}
+                               lat={pointLatLon?.lat ?? null} lon={pointLatLon?.lon ?? null} onGo={goTo} />
         </Card>
 
         {map && (
@@ -315,14 +360,15 @@ export function InstantView({ info, basemap, terrain, requestTerrain, onServerDo
           )}
           {view === '3d' && (
             <div className="h-full overflow-hidden rounded-xl border border-space-700">
-              {terrain ? (
-                <Terrain3D terrain={terrain} baseUrl={basemap.image} layers={textureLayers} exaggeration={exaggeration}
-                           sun={map?.sun} earth={map?.earth} marker={pointXY} onClickMap={queryPoint} />
+              {tileMeta ? (
+                <TerrainLOD3D meta={tileMeta} exaggeration={exaggeration} analytic={analyticSpec} sun={map?.sun} earth={map?.earth}
+                              marker={marker3d} focus={focus3d} debugLevels={debugLevels} onStats={setLodStats} onClickMap={clickMap} />
               ) : (
-                <div className="flex h-full items-center justify-center text-sm text-slate-500">Carregando relevo…</div>
+                <div className="flex h-full items-center justify-center text-sm text-slate-500">Carregando a quadtree…</div>
               )}
+              {lodStats && tileMeta && <LodHud stats={lodStats} meta={tileMeta} debug={debugLevels} setDebug={setDebugLevels} />}
               <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-space-950/80 px-2.5 py-1 text-[11px] text-slate-400">
-                Arraste para girar · role para zoom · botão direito para mover · relevo exagerado {exaggeration}×
+                Arraste para girar · role para zoom (do polo inteiro a ~74 m) · botão direito para mover · relevo exagerado {exaggeration}×
               </div>
             </div>
           )}
@@ -379,5 +425,29 @@ function ModeOption({ active, disabled, onClick, icon, title, badge, text }: {
       </div>
       <p className="mt-1 text-xs leading-relaxed text-slate-400">{text}</p>
     </button>
+  )
+}
+
+/** Painel de telemetria da quadtree: prova de que a memória fica limitada enquanto o detalhe acompanha a câmera. */
+function LodHud({ stats: s, meta, debug, setDebug }: { stats: LodStats; meta: TileMeta; debug: boolean; setDebug: (v: boolean) => void }) {
+  const fullGiB = ((meta.size_m / meta.leaf_cell_m) ** 2 * 32) / 2 ** 30 // malha inteira na resolução máxima
+  const cell = meta.size_m / 2 ** s.maxZoom / meta.tile_cells
+  return (
+    <div className="absolute top-3 right-3 z-10 w-[268px] rounded-lg border border-space-600 bg-space-950/88 px-3 py-2.5 text-[11.5px] text-slate-300 backdrop-blur">
+      <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-slate-100"><Layers className="size-3.5 text-sun-400" /> Quadtree LOD</div>
+      <div className="tabular grid grid-cols-[1fr_auto] gap-x-2 gap-y-0.5">
+        <span className="text-slate-500">Tiles na tela / em memória</span><span>{s.rendered} / {s.loaded}</span>
+        <span className="text-slate-500">Vértices desenhados</span><span>{(s.vertices / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} M</span>
+        <span className="text-slate-500">Nível mais fino na tela</span><span>z{s.maxZoom} · {fmt(cell, 0)} m</span>
+        <span className="text-slate-500">Memória de GPU (estimada)</span><span className="text-emerald-300">{fmt(s.gpuMB, 0)} / 128 MB</span>
+        <span className="text-slate-500">Sem LOD (malha inteira)</span><span className="text-rose-300">{fmt(fullGiB, 1)} GiB</span>
+        <span className="text-slate-500">Carregando</span><span>{s.pending} tiles</span>
+        {s.analyticWanted > 0 && (<><span className="text-slate-500">Sol + Terra por tile</span><span>{s.analyticReady}/{s.analyticWanted}</span></>)}
+      </div>
+      <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-slate-400">
+        <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} className="accent-sun-400" />
+        Colorir tiles por nível (debug)
+      </label>
+    </div>
   )
 }

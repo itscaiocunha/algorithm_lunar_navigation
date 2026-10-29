@@ -16,7 +16,7 @@ DEM LOLA (GeoTIFF) ──► matriz NumPy de alturas (m)  ───────�
 | `data/dem/LDEM_80S_80MPP_ADJ.TIF` (181 MB) | [PGDA/GSFC — LOLA South Pole](https://pgda.gsfc.nasa.gov/products/90), Barker et al. (2023) — ver [REFERENCIAS.md](REFERENCIAS.md) | Alturas em metros sobre esfera de 1737,4 km; 80°S–90°S; 7600×7600 px de 80 m |
 
 - Projeção polar estereográfica sul (`+proj=stere +lat_0=-90 +R=1737400`), no frame MOON_ME.
-- O mapa é quadrado: os cantos (até ~75,9°S) não têm dados e nunca bloqueiam a luz.
+- O mapa é quadrado (608 × 608 km): os cantos chegam a ~75,9°S e também têm dados de altitude.
 - Há versões de 40, 20 e 10 m/px no mesmo site (685 MB a 4,8 GB). Para usar
   uma delas, passe `--dem caminho.tif` (o código lê a resolução do arquivo).
 
@@ -317,6 +317,40 @@ cache de horizontes (|Δ| < 0,01°). Raízes sintéticas e o caso de janela expa
 também são testados.
 
 **Custo:** ~0,7–1,5 s por clique, quase todo nos ray-castings exatos do refinamento.
+
+# Catálogo de alvos de missão (`frontend/src/lib/presets.ts`)
+
+O seletor "Alvo de missão" leva a telemetria, a contagem regressiva e as câmeras
+2D e 3D até um alvo. A NASA não publicou coordenadas centrais nem limites das 13
+regiões candidatas do Artemis III; o anúncio de 2022 descreve áreas de 15×15 km.
+Por isso, os alvos **Peak Optimized** usam o ponto de melhor pontuação composta
+que o modelo encontra junto ao acidente geográfico nomeado. Afirmar que o ponto
+fica *dentro* da região oficial não seria verificável.
+
+| Alvo | Coordenada | Validação no modelo LOLA (80 m) |
+|---|---|---|
+| Connecting Ridge (Peak Optimized) | −89,451°, −137,1° | Candidato nº 1: 1957 m, 83,8% de Sol, janela de ouro de 15,5 d, noite máx. 6 d |
+| Peak Near Shackleton (Peak Optimized) | −89,78°, −156,4° | Candidato nº 5: pico de 1737 m **sobre a borda** da Shackleton (10,4 km do centro ≈ raio), 76,7% de Sol |
+| Malapert Massif | −85,99°, 2,93° | 5128 m, coerente com um maciço; 122 km do polo, fora da malha |
+| VIPER / Mons Mouton (Nobile oeste) | −85,33°, 31,69° | Planalto de 6164 m (acima de 89% do terreno num raio de 24 km), não o centro afundado da Nobile (917 m) |
+
+**Coordenadas descartadas, e o motivo:**
+
+| Coordenada | O que o modelo mostrou |
+|---|---|
+| Peak Near Shackleton −89,78°, **+129,54°** | Fundo da Shackleton, −2502 m, sem Sol o ano todo |
+| Connecting Ridge com **+137,1°** | Dentro da Shackleton, em sombra permanente |
+| Faustini Rim A −87,3°, 77,0° | −2772 m, interior da cratera; retirado do catálogo por falta de coordenada validada |
+| Nobile −85,28°, 53,27° | Centro da cratera, e não a borda oeste que o VIPER mirava |
+
+**Fontes externas:** cume de Mons Mouton em ~84,6°S, 31°E e local de pouso da IM-2
+em 84,79°S, 29,20°E (Wikipedia, Mons Mouton); alvo do VIPER descrito como a borda
+oeste da Nobile (NASA SVS 4937, USGS). A coordenada exata do VIPER não foi
+encontrada publicada.
+
+**Alvos fora da malha de ±30 km:** telemetria e contagem regressiva funcionam,
+porque o DEM vai até 80°S. O 2D afasta o zoom para mostrar o alvo, e o 3D volta à
+visão geral.
 
 # API e dashboard
 
