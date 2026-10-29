@@ -75,11 +75,14 @@ Saídas em `output/`: PNG (topografia + iluminação) e GeoTIFF georreferenciado
 
 | Método | Tempo |
 |---|---|
-| Vetorizado (NumPy) | ~14 s |
+| Vetorizado (NumPy), blocos de 65 536 px | ~10 s |
+| Vetorizado, toda a malha de uma vez (versão inicial) | ~14 s |
 | Mesmo código, um pixel por vez | ~33 h (extrapolado de 300 px) |
 
-Os dois produzem resultados idênticos. A elevação do Sol calculada pelo
-motor vetorizado coincide com a do `solar.py`/SPICE até 10⁻⁶ grau.
+Os três produzem resultados idênticos. Processar em blocos mantém os arrays
+temporários no cache da CPU (a operação é limitada por banda de memória).
+A elevação do Sol calculada pelo motor vetorizado coincide com a do
+`solar.py`/SPICE até 10⁻⁶ grau.
 
 ## Validação (`tests/test_illumination.py`)
 
@@ -99,3 +102,86 @@ motor vetorizado coincide com a do `solar.py`/SPICE até 10⁻⁶ grau.
 - Amostragem por vizinho mais próximo; picos estreitos muito distantes podem
   ser pulados pelo passo crescente (ajuste com `--growth`).
 - Não considera luz refletida pela Terra ou pelo próprio terreno.
+
+---
+
+# Análise de longo prazo (`scripts/mapa_anual.py`)
+
+## Método de horizontes
+
+Iterar o motor direto a cada 12 h em 2027 custaria 730 × ~10 s ≈ 2 h, sem
+reaproveitamento. Como o relevo não muda, `horizon.py` calcula **uma vez** o
+horizonte de cada pixel em 180 azimutes (passo de 2°), com o mesmo
+ray-marching vetorizado em raios horizontais, e guarda em
+`data/cache/horizon_*.npz` (~200 MB, float16). Depois, qualquer instante é:
+
+```
+fração = disco_visível(elevação_do_Sol − horizonte_interpolado(azimute_do_Sol))
+```
+
+em ~0,1 s para os 562 500 pixels (Mazarico et al., 2011).
+
+- **Corte de faixa:** perto do polo o Sol nunca passa de colatitude + ~1,6°
+  de elevação; horizontes fora de ±(colatitude + 1,9°) são cortados, o que
+  permite encerrar os raios cedo sem alterar o resultado.
+- **Paralelismo:** azimutes independentes → `ProcessPoolExecutor` (6 processos).
+- **Custo medido:** pré-cálculo 869 s (uma vez); 730 instantes em 85 s.
+
+### Validação contra o motor direto
+
+| Instante (aleatório, 2027) | Luz/sombra iguais | \|Δ fração\| médio |
+|---|---|---|
+| 2027-02-02 13:00 | 99,84% | 0,0017 |
+| 2027-06-10 04:00 | 99,91% | 0,0009 |
+| 2027-08-27 21:00 | 99,82% | 0,0018 |
+| 2027-10-10 10:00 | 99,86% | 0,0015 |
+
+As divergências (~0,15%) ficam em bordas de sombra, pela interpolação entre
+azimutes a cada 2°. Reproduza com `python scripts/mapa_anual.py --validar 4`.
+
+## Métricas por pixel
+
+| Métrica | Significado |
+|---|---|
+| `illumination_pct` | Média da fração do disco visível (% do tempo com Sol, ponderado pelo disco) |
+| `any_sun_pct` | % dos instantes com qualquer parte do Sol visível |
+| `longest_night_h` | Maior sequência contínua sem Sol — dimensiona baterias |
+| `psr` | Nenhum Sol em todo o período: candidata a sombra permanente / armadilha fria |
+
+## Resultado 2027 (±30 km do polo, a cada 12 h)
+
+- Sem Sol o ano inteiro: **595,6 km²** (16,5% da área), incluindo o fundo da Shackleton.
+- Pixel mais iluminado: **83,8%** (−89,451°, −137,14°E, 1957 m), crista a sudoeste da
+  Shackleton, a 2,6 km de uma região de sombra permanente; maior noite de 6 dias.
+- Tabela completa: `output/anual_2027_picos.json`.
+
+**Comparação com a literatura:** Bussey et al. (2010) indicam como ponto mais
+iluminado do polo sul 88,74°S, 124,5°E (86% em 2020). Ele está a ~38 km do
+polo, **fora** do recorte de ±30 km usado aqui; nosso pico nº 10 está na borda
+do recorte nessa direção. Para incluí-lo, rode com `--half-size-km 45` (novo
+cache de horizontes, ~2,5× mais pixels).
+
+**Atenção:** um ano não é um ciclo completo. A geometria Sol–Lua se repete em
+~18,6 anos; "sombra permanente" aqui significa "sem Sol em 2027".
+
+---
+
+# API e dashboard
+
+```powershell
+uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
+```
+
+| Endpoint | Retorno | Tempo medido |
+|---|---|---|
+| `GET /` | Dashboard web (`web/`) | — |
+| `GET /api/illumination?utc=2026-11-20T00:00:00Z&lat=-89.9&lon=0` | Fração, status, elevação/azimute do Sol, horizonte, altitude e estatística anual do pixel | ~0,15 s |
+| `GET /api/map?utc=...&modo=completo` | PNG base64 + limites + estatísticas | ~10,5 s |
+| `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,3 s |
+| `GET /api/map?utc=...&formato=geotiff` | GeoTIFF para download | — |
+| `GET /api/annual?year=2027` | Mapa de calor anual + sombras permanentes + picos | ~0,8 s |
+| `GET /api/basemap` | Relevo sombreado da área | ~0,7 s |
+| `GET /api/info` | DEM, área, caches disponíveis | — |
+
+Documentação interativa em `/docs`. O CSPICE não é thread-safe: toda chamada
+SPICE passa por um lock em `service.py`, e cálculos de malha rodam um por vez.

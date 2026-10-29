@@ -19,6 +19,7 @@ e a inversa (vetor unitário a partir de x, y, com ρ² = x² + y²):
 """
 
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +34,7 @@ NODATA_HEIGHT = -1e5  # células sem dado nunca bloqueiam a luz
 
 @dataclass
 class DEM:
-    heights: np.ndarray  # (linhas, colunas) float64, metros acima da esfera R
+    heights: np.ndarray  # (linhas, colunas) metros acima da esfera R
     x0: float  # coordenada X da borda esquerda (m)
     y0: float  # coordenada Y da borda superior (m)
     pixel: float  # tamanho do pixel (m); linhas crescem para Y negativo
@@ -42,6 +43,11 @@ class DEM:
     @property
     def shape(self) -> tuple[int, int]:
         return self.heights.shape
+
+    @cached_property
+    def max_height(self) -> float:
+        """Pico mais alto do DEM (m), ignorando células sem dado (calculado uma vez)."""
+        return float(self.heights[self.heights > NODATA_HEIGHT].max())
 
     def pixel_centers(self) -> tuple[np.ndarray, np.ndarray]:
         """Grades (X, Y) dos centros dos pixels, em metros."""
@@ -82,7 +88,7 @@ class DEM:
     def surface_points(self) -> np.ndarray:
         """Posição 3D (m, MOON_ME) do centro de cada pixel na superfície."""
         x, y = self.pixel_centers()
-        return self.to_unit_vectors(x, y) * (self.radius + self.heights)[..., None]
+        return self.to_unit_vectors(x, y) * (self.radius + self.heights.astype(np.float64))[..., None]
 
     def lat_lon(self) -> tuple[np.ndarray, np.ndarray]:
         """Latitude e longitude (graus) dos centros dos pixels."""
@@ -127,7 +133,8 @@ def load_dem(path: Path = DEFAULT_DEM, downsample: int = 1, window: Window | Non
         transform = src.window_transform(win) * src.transform.scale(downsample, downsample)
         if not np.isclose(transform.a, -transform.e) or transform.b or transform.d:
             raise ValueError("Esperado pixel quadrado e sem rotação")
-        heights = np.asarray(data.filled(np.nan), dtype=np.float64)
+        # float32: precisão sub-milimétrica nas alturas e metade da memória (231 MB a 80 m)
+        heights = np.asarray(data.filled(np.nan), dtype=np.float32)
         heights[~np.isfinite(heights)] = NODATA_HEIGHT
         scale = src.scales[0] if src.scales else 1.0
         offset = src.offsets[0] if src.offsets else 0.0

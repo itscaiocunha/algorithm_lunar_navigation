@@ -1,0 +1,169 @@
+"""Mapa anual de iluminação do polo sul: "Picos da Luz Eterna" e sombras permanentes.
+
+Uso:
+    python scripts/mapa_anual.py                      # 2027, a cada 12 h (método de horizontes)
+    python scripts/mapa_anual.py --passo-horas 1      # resolução horária (segundos a mais)
+    python scripts/mapa_anual.py --validar 5          # compara com o motor direto em 5 instantes
+    python scripts/mapa_anual.py --direto --passo-horas 24   # itera o motor direto (lento, ~1,5 h)
+
+1ª execução: pré-calcula os horizontes (~10 min, paralelo) e guarda em data/cache/.
+Saídas em output/: anual_<ano>.npz (usado pela API), .tif (4 bandas), .png e _picos.json.
+"""
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import rasterio
+import spiceypy as spice
+from rasterio.transform import from_origin
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from lunar_navigator import annual, config, horizon, illumination, render, solar, terrain  # noqa: E402
+
+
+def progress_bar(label):
+    t0 = time.perf_counter()
+
+    def update(done, total):
+        el = time.perf_counter() - t0
+        eta = el / done * (total - done)
+        bar = "#" * int(30 * done / total)
+        print(f"\r  {label} [{bar:<30}] {done}/{total}  {el:6.0f}s  (faltam ~{eta:.0f}s)  ", end="", flush=True)
+        if done == total:
+            print()
+
+    return update
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--ano", type=int, default=2027)
+    p.add_argument("--passo-horas", type=float, default=12.0)
+    p.add_argument("--half-size-km", type=float, default=config.HALF_SIZE_M / 1000)
+    p.add_argument("--azimutes", type=int, default=config.N_AZIMUTHS)
+    p.add_argument("--workers", type=int, default=None)
+    p.add_argument("--validar", type=int, default=0, help="nº de instantes para comparar com o motor direto")
+    p.add_argument("--direto", action="store_true", help="itera o motor direto (sem horizontes)")
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    solar.load_kernels()
+    dem = terrain.load_dem(config.DEM_PATH)
+    area = dem.crop(0.0, 0.0, args.half_size_km * 1000)
+    start, end = f"{args.ano}-01-01T00:00:00", f"{args.ano + 1}-01-01T00:00:00"
+    print(f"Área: {area.shape[0]}x{area.shape[1]} px de {area.pixel:.0f} m  (±{args.half_size_km:g} km do polo)")
+
+    t0 = time.perf_counter()
+    if args.direto:
+        def fraction_at(et):
+            return illumination.compute_illumination(area, dem, illumination.sun_position_m(et)).fraction
+    else:
+        cached = horizon.cache_path(area, config.DEM_PATH, args.azimutes, config.GROWTH).exists()
+        print("1. Horizontes:", "lidos do cache" if cached else f"calculando {args.azimutes} azimutes em paralelo")
+        hmap = horizon.compute_horizons(area, config.DEM_PATH, n_azimuths=args.azimutes, growth=config.GROWTH,
+                                        workers=args.workers, progress=progress_bar("azimutes"))
+        print(f"   pronto em {time.perf_counter() - t0:.0f} s")
+        fraction_at = annual.horizon_fraction(hmap)
+        if args.validar:
+            validate(hmap, area, dem, args.ano, args.validar)
+
+    print(f"2. Iluminação de {start[:10]} a {end[:10]}, a cada {args.passo_horas:g} h")
+    t1 = time.perf_counter()
+    result = annual.accumulate(fraction_at, area.shape, start, end, args.passo_horas, progress_bar("instantes"))
+    print(f"   {result.n_samples} instantes em {time.perf_counter() - t1:.1f} s")
+
+    peaks = annual.eternal_light_peaks(result, area)
+    report(result, area, peaks)
+    save(result, area, peaks, args.ano)
+
+
+def validate(hmap, area, dem, year, n):
+    print(f"   Validação contra o motor direto em {n} instantes aleatórios de {year}:")
+    rng = np.random.default_rng(42)
+    ets = annual.time_grid(f"{year}-01-01T00:00:00", f"{year + 1}-01-01T00:00:00", 1.0)
+    for et in np.sort(rng.choice(ets, n, replace=False)):
+        sun = illumination.sun_position_m(et)
+        direct = illumination.compute_illumination(area, dem, sun).fraction
+        fast = hmap.illumination(sun)
+        agree = np.mean((direct > 0) == (fast > 0))
+        print(f"     {spice.et2utc(et, 'ISOC', 0)}  luz/sombra iguais em {agree:.2%}  "
+              f"|Δfração| médio {np.abs(direct - fast).mean():.4f}")
+
+
+def report(result, area, peaks):
+    pix_km2 = (area.pixel / 1000) ** 2
+    print("\n=== Resultado ===")
+    print(f"Sombra em todo o período (PSR): {result.psr.sum() * pix_km2:,.1f} km²  ({result.psr.mean():.1%} da área)")
+    print(f"Pixels com Sol > 80% do tempo:  {(result.illumination_pct > 80).sum() * pix_km2:,.2f} km²")
+    print("\nPicos da Luz Eterna (máximos locais, separados ≥ 1,5 km):")
+    print(f"{'#':>2} {'lat':>9} {'lon':>9} {'alt (m)':>8} {'luz %':>6} {'Sol %':>6} {'noite máx':>10} {'dist. PSR':>9}")
+    for p in peaks:
+        print(f"{p['rank']:>2} {p['lat']:>9.4f} {p['lon']:>9.3f} {p['height_m']:>8.0f} {p['illumination_pct']:>6.1f} "
+              f"{p['any_sun_pct']:>6.1f} {p['longest_night_h'] / 24:>8.1f} d {p['distance_to_psr_km']:>7.2f} km")
+
+
+def save(result, area, peaks, year):
+    out = config.OUTPUT_DIR
+    out.mkdir(parents=True, exist_ok=True)
+    meta = dict(x0=area.x0, y0=area.y0, pixel=area.pixel, n_samples=result.n_samples,
+                step_hours=result.step_hours, start_utc=result.start_utc, end_utc=result.end_utc)
+    np.savez_compressed(config.annual_path(year), illumination_pct=result.illumination_pct.astype(np.float32),
+                        any_sun_pct=result.any_sun_pct.astype(np.float32),
+                        longest_night_h=result.longest_night_h.astype(np.float32), psr=result.psr,
+                        meta=json.dumps(meta), peaks=json.dumps(peaks))
+
+    with rasterio.open(config.DEM_PATH) as src:
+        crs = src.crs
+    profile = dict(driver="GTiff", height=area.shape[0], width=area.shape[1], count=4, dtype="float32", crs=crs,
+                   compress="deflate", transform=from_origin(area.x0, area.y0, area.pixel, area.pixel))
+    with rasterio.open(out / f"anual_{year}.tif", "w", **profile) as dst:
+        for i, (name, band) in enumerate([("illumination_pct", result.illumination_pct),
+                                          ("any_sun_pct", result.any_sun_pct),
+                                          ("longest_night_h", result.longest_night_h),
+                                          ("psr", result.psr)], start=1):
+            dst.write(band.astype(np.float32), i)
+            dst.set_band_description(i, name)
+
+    (out / f"anual_{year}_picos.json").write_text(json.dumps(peaks, indent=2, ensure_ascii=False), encoding="utf-8")
+    save_png(out / f"anual_{year}.png", result, area, peaks, year)
+    print(f"\nSalvo em {out}: anual_{year}.npz / .tif / .png / _picos.json")
+
+
+def save_png(path, result, area, peaks, year):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    extent = np.array([area.x0, area.x0 + area.shape[1] * area.pixel,
+                       area.y0 - area.shape[0] * area.pixel, area.y0]) / 1000
+    fig, ax = plt.subplots(figsize=(9, 8), constrained_layout=True)
+    ax.imshow(render.hillshade(area.heights, area.pixel), cmap="gray", extent=extent)
+    heat = np.ma.masked_where(result.psr, result.illumination_pct)
+    im = ax.imshow(heat, cmap="inferno", vmin=0, vmax=100, alpha=0.85, extent=extent)
+    psr = np.ma.masked_where(~result.psr, np.ones_like(result.illumination_pct))
+    ax.imshow(psr, cmap=matplotlib.colors.ListedColormap([np.array(render.PSR_COLOR) / 255]), extent=extent, alpha=0.9)
+    fig.colorbar(im, ax=ax, label="% do tempo iluminado (média do disco solar)", shrink=0.8)
+    for p in peaks:
+        ax.plot(p["x_m"] / 1000, p["y_m"] / 1000, "o", mfc="none", mec="lime", ms=10, mew=1.5)
+        ax.annotate(str(p["rank"]), (p["x_m"] / 1000, p["y_m"] / 1000), color="lime", fontsize=9,
+                    xytext=(6, 6), textcoords="offset points")
+    ax.plot(0, 0, "w+", ms=12, mew=2)
+    ax.set_title(f"Iluminação solar {year} — polo sul lunar\n"
+                 f"ciano = sem Sol o ano todo (sombra permanente)  ·  verde = Picos da Luz Eterna")
+    ax.set_xlabel("X (km)")
+    ax.set_ylabel("Y (km)")
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    main()

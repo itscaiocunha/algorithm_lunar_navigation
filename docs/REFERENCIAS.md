@@ -98,6 +98,12 @@ using LOLA topography. *Icarus*, 211(2).
 — Método de referência para iluminação polar com horizontes topográficos,
 base conceitual de `illumination.py` (horizonte na direção do Sol + fração do disco).
 
+<a id="r11"></a>**[R11]** Bussey, D. B. J., et al. (2010). Illumination conditions of the
+south pole of the Moon derived using Kaguya topography. *Icarus*, 208,
+558–564. <https://doi.org/10.1016/j.icarus.2010.03.028>
+— Ponto mais iluminado do polo sul (88,74°S, 124,5°E; 86%), usado como
+comparação em `docs/ILUMINACAO.md`.
+
 <a id="r10"></a>**[R10]** Gläser, P., et al. (2014). Illumination conditions at the
 lunar south pole using high resolution Digital Terrain Models from LOLA.
 *Icarus*, 243, 78–90. <https://ui.adsabs.harvard.edu/abs/2014Icar..243...78G>

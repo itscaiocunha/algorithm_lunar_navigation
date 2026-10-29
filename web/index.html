@@ -1,0 +1,205 @@
+﻿<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lunar Navigator — Iluminação do Polo Sul</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23ffb547'/%3E%3Cpath d='M8 1a7 7 0 0 0 0 14z' fill='%230b0e14'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="logo">◐</span>
+    <div>
+      <h1>Lunar Navigator</h1>
+      <p>Luz e sombra no polo sul da Lua · SPICE (NASA/NAIF) + topografia LOLA</p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="instant" role="tab">Iluminação num instante</button>
+    <button class="tab" data-tab="annual" role="tab">Análise anual</button>
+    <button class="tab" data-tab="how" role="tab">Como funciona</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============ INSTANTE ============ -->
+  <section id="tab-instant" class="tab-panel active">
+    <aside class="panel">
+      <h2>1. Escolha o instante</h2>
+      <label class="field">Data e hora (UTC)
+        <input id="utc" type="datetime-local" step="1" value="2026-11-20T00:00:00">
+      </label>
+      <div class="step-buttons">
+        <button data-step="-24">−1 dia</button>
+        <button data-step="-6">−6 h</button>
+        <button data-step="6">+6 h</button>
+        <button data-step="24">+1 dia</button>
+      </div>
+
+      <h2>2. Método de cálculo</h2>
+      <label class="radio"><input type="radio" name="mode" value="completo" checked>
+        <span><b>Ray-casting completo</b> · ~10 s<br><small>Traça um raio de cada pixel até o Sol.</small></span></label>
+      <label class="radio" id="mode-fast-label"><input type="radio" name="mode" value="rapido">
+        <span><b>Mapa de horizontes</b> · &lt; 1 s<br><small>Usa horizontes pré-calculados (mesmo resultado, ±1 pixel).</small></span></label>
+
+      <button id="run" class="primary">Calcular iluminação</button>
+
+      <div id="result-card" class="card hidden">
+        <h3>Resultado</h3>
+        <div class="kpis">
+          <div><span id="k-lit">–</span><small>com Sol visível</small></div>
+          <div><span id="k-shadow">–</span><small>em sombra</small></div>
+          <div><span id="k-elev">–</span><small>elevação do Sol</small></div>
+        </div>
+        <p id="why-time" class="why"></p>
+      </div>
+
+      <div id="point-card" class="card hidden">
+        <h3>Ponto selecionado</h3>
+        <div id="point-body"></div>
+      </div>
+
+      <div class="card guide">
+        <h3>Como ler o mapa</h3>
+        <div class="legend-bar"></div>
+        <div class="legend-labels"><span>0 · sombra</span><span>penumbra</span><span>1 · Sol inteiro</span></div>
+        <ul>
+          <li><b>Preto</b>: o relevo esconde o Sol. Perto do polo o Sol fica a ~1,5° do horizonte, então
+            uma cratera ou montanha projeta sombras de <b>dezenas de km</b>.</li>
+          <li><b>Laranja</b>: penumbra — só parte do disco solar (0,5° de diâmetro) aparece acima do relevo.</li>
+          <li><b>Amarelo claro</b>: o disco solar inteiro está visível.</li>
+          <li>O <b>fundo da cratera Shackleton</b> (círculo à direita do polo, ✛) está sempre escuro:
+            é uma das regiões de sombra permanente onde pode haver gelo de água.</li>
+          <li><b>Clique no mapa</b> para ver a elevação do Sol e o horizonte daquele ponto.</li>
+        </ul>
+      </div>
+    </aside>
+
+    <section class="viewer">
+      <div class="viewer-bar">
+        <div class="seg">
+          <button class="seg-btn active" data-view="side">Lado a lado</button>
+          <button class="seg-btn" data-view="overlay">Sobreposto</button>
+        </div>
+        <label class="opacity">Opacidade da iluminação
+          <input id="opacity" type="range" min="0" max="100" value="80"></label>
+        <span id="cursor" class="cursor">passe o mouse sobre o mapa</span>
+      </div>
+
+      <div id="maps" class="maps side">
+        <figure class="map-frame" id="frame-base">
+          <figcaption>Topografia LOLA (relevo sombreado)</figcaption>
+          <div class="map" data-map>
+            <img id="img-base" alt="Relevo do polo sul lunar">
+            <img id="img-over" class="over hidden" alt="">
+            <div class="marker hidden"></div><span class="pole">✛</span>
+          </div>
+        </figure>
+        <figure class="map-frame" id="frame-light">
+          <figcaption id="cap-light">Iluminação — escolha uma data e clique em Calcular</figcaption>
+          <div class="map" data-map>
+            <img id="img-light" alt="Mapa de iluminação">
+            <div class="marker hidden"></div><span class="pole">✛</span>
+          </div>
+        </figure>
+        <div id="loading" class="loading hidden">
+          <div class="timer"><span id="timer">0,0</span> s</div>
+          <ol id="steps" class="steps"></ol>
+          <div class="progress"><div id="progress-bar"></div></div>
+          <p class="loading-note">Cada pixel lança um raio em direção ao Sol e “caminha” sobre o
+            relevo, verificando se alguma montanha está mais alta que o raio.</p>
+        </div>
+      </div>
+      <p class="scale-note">Área: ±30 km em torno do polo sul · pixel de 80 m · eixos em km (projeção polar estereográfica)</p>
+    </section>
+  </section>
+
+  <!-- ============ ANUAL ============ -->
+  <section id="tab-annual" class="tab-panel">
+    <aside class="panel">
+      <h2>Picos da Luz Eterna</h2>
+      <p class="lead">Um local de pouso Artemis ideal tem <b>Sol quase contínuo</b> (energia solar e
+        temperatura estável) e fica <b>perto de sombra permanente</b> (onde o gelo de água pode estar preso).</p>
+      <div id="annual-kpis" class="kpis"></div>
+      <p id="annual-meta" class="muted"></p>
+      <h3>Melhores pontos</h3>
+      <table class="peaks">
+        <thead><tr><th>#</th><th>Luz</th><th>Maior noite</th><th>Até a sombra</th></tr></thead>
+        <tbody id="peaks-body"></tbody>
+      </table>
+      <p class="muted">Clique numa linha para localizar o ponto no mapa.</p>
+      <div class="card guide">
+        <h3>Como ler</h3>
+        <div class="legend-bar"></div>
+        <div class="legend-labels"><span>0%</span><span>50%</span><span>100% do tempo com Sol</span></div>
+        <ul>
+          <li>Cor = <b>% do tempo com Sol</b> (média do disco visível) ao longo do ano.</li>
+          <li><b class="cyan">Ciano</b> = nunca recebeu Sol no período: <b>sombra permanente</b> (armadilha fria).</li>
+          <li><b class="lime">Círculos verdes</b> = máximos locais de iluminação.</li>
+          <li><b>Maior noite</b>: maior intervalo contínuo sem Sol — define o tamanho das baterias.</li>
+        </ul>
+      </div>
+    </aside>
+    <section class="viewer">
+      <div class="map-frame single">
+        <figcaption id="annual-cap">Análise anual</figcaption>
+        <div class="map" id="annual-map">
+          <img id="img-annual" alt="Mapa anual de iluminação">
+          <span class="pole">✛</span>
+          <div id="annual-missing" class="loading hidden">
+            <p>A análise anual ainda não foi gerada.</p>
+            <code>python scripts/mapa_anual.py</code>
+          </div>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <!-- ============ COMO FUNCIONA ============ -->
+  <section id="tab-how" class="tab-panel how">
+    <article>
+      <h2>Por que o cálculo completo leva ~10 segundos?</h2>
+      <p>O mapa tem <b>562 500 pixels</b> de 80 m. Para cada um, o programa responde: <i>“existe alguma
+        montanha entre este ponto e o Sol?”</i>. Isso é um <b>ray-casting</b>: um raio sai do pixel em
+        direção ao Sol e avança em passos (80 m perto, crescendo 1% a cada passo), consultando a altura do
+        terreno em cada posição. São até <b>~400 passos por raio</b> e centenas de milhões de consultas ao relevo.</p>
+      <p>Em vez de tratar um pixel por vez (o mesmo cálculo levaria <b>~33 horas</b> em Python), o motor
+        avança <b>todos os raios ao mesmo tempo</b> com operações vetorizadas do NumPy: cada passo é uma
+        única operação sobre meio milhão de raios.</p>
+
+      <h2>O pipeline</h2>
+      <ol class="pipeline">
+        <li><b>SPICE (NASA/NAIF)</b> — converte a data para tempo de efeméride e calcula a posição aparente do
+          Sol no referencial lunar <code>MOON_ME</code> (efemérides DE440, correção de tempo-luz).</li>
+        <li><b>DEM LOLA</b> — o mapa de altitudes do Lunar Reconnaissance Orbiter vira uma matriz NumPy
+          (7600 × 7600 células de 80 m).</li>
+        <li><b>Ray-casting 3D</b> — os raios são traçados em 3D, incluindo a <b>curvatura da Lua</b>: com o Sol
+          a 1,5°, um raio sobe 2,6 km em 100 km, mas a superfície “cai” 2,9 km nessa distância.</li>
+        <li><b>Disco solar</b> — o Sol não é um ponto: mede 0,5°. O resultado é a fração do disco acima do
+          horizonte (0 a 1), o que gera a penumbra laranja.</li>
+      </ol>
+
+      <h2>E o modo rápido?</h2>
+      <p>O relevo não muda — só o Sol se move. Então calculamos <b>uma vez</b> o horizonte de cada pixel em
+        180 direções (o mesmo ray-casting) e guardamos. Depois, qualquer instante é só comparar a elevação do
+        Sol com o horizonte na direção dele: <b>&lt; 1 s</b>. É assim que o mapa anual (730 instantes) sai em
+        ~1,5 minuto em vez de ~2 horas — método de Mazarico et al. (2011). O pré-cálculo dos horizontes
+        leva ~15 min uma única vez (6 processos em paralelo) e fica em cache.</p>
+
+      <h2>Limitações</h2>
+      <ul>
+        <li>Pixel de 80 m: crateras menores que ~160 m não aparecem.</li>
+        <li>Um ano não é um ciclo completo: a geometria Sol-Lua se repete a cada ~18,6 anos, então a
+          “sombra permanente” aqui significa “sem Sol em todo o período analisado”.</li>
+        <li>Luz refletida pela Terra e pelo terreno não é considerada.</li>
+      </ul>
+      <p class="muted">Fontes e referências completas: <code>docs/REFERENCIAS.md</code> · API: <a href="/docs">/docs</a></p>
+    </article>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

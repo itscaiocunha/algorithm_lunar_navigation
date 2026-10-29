@@ -8,10 +8,11 @@ from lunar_navigator.api import app
 client = TestClient(app)
 
 
-def test_root_redirects_to_docs():
-    response = client.get("/", follow_redirects=False)
-    assert response.status_code == 307
-    assert response.headers["location"] == "/docs"
+def test_root_serves_dashboard():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Lunar Navigator" in response.text
+    assert client.get("/app.js").status_code == 200
 
 
 def test_health():

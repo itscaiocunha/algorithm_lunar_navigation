@@ -26,7 +26,7 @@ import numpy as np
 import spiceypy as spice
 
 from lunar_navigator.solar import ABCORR, BODY, FRAME
-from lunar_navigator.terrain import DEM, NODATA_HEIGHT
+from lunar_navigator.terrain import DEM
 
 SUN_RADIUS_M = 695_700_000.0  # raio nominal IAU 2015
 
@@ -60,8 +60,7 @@ def _march(points, sun, terrain: DEM, first_step, growth, max_distance):
     sun_elev = np.arcsin(np.einsum("ij,ij->i", s_hat, n_hat))
     sun_radius = np.arcsin(SUN_RADIUS_M / dist)
 
-    valid_terrain = terrain.heights[terrain.heights > NODATA_HEIGHT]
-    ceiling = terrain.radius + valid_terrain.max()
+    ceiling = terrain.radius + terrain.max_height
 
     horizon = np.full(len(points), -np.pi / 2)
     active = np.arange(len(points))
@@ -91,7 +90,7 @@ def compute_illumination(
     sun_m: np.ndarray,
     growth: float = 0.01,
     max_distance: float = np.inf,
-    chunk_size: int = 250_000,
+    chunk_size: int = 65_536,  # blocos que cabem no cache da CPU
 ) -> IlluminationResult:
     """Iluminação de cada pixel de `area`, usando `terrain` como obstáculo.
 
