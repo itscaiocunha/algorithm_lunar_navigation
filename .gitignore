@@ -1,0 +1,19 @@
+# Ambiente virtual
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Kernels SPICE (arquivos grandes, baixados sob demanda)
+kernels/*
+!kernels/.gitkeep
+
+# IDE / SO
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
