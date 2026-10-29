@@ -101,6 +101,22 @@ Os kernels genéricos ficam em
 devem ser colocados na pasta `kernels/` (ignorada pelo git por serem
 grandes).
 
+**Conjunto usado no projeto** (carregado pelo meta-kernel `kernels/lunar.tm`):
+
+| Necessidade | Arquivo | Origem (generic_kernels/) |
+|---|---|---|
+| Conversão de tempo (UTC ↔ TDB) | `latest_leapseconds.tls` (= `naif0012.tls`) | `lsk/` |
+| Efemérides Sol/Terra/Lua | `de440.bsp` (1550–2650) | `spk/planets/` |
+| Raios e rotação IAU dos corpos | `pck00011.tpc` | `pck/` |
+| Orientação precisa da Lua | `moon_pa_de440_200625.bpc` | `pck/` |
+| Frames `MOON_PA` / `MOON_ME` | `moon_de440_250416.tf` | `fk/satellites/` |
+
+O PCK binário e o FK da Lua são **casados com a DE440**: não misture com
+outra efeméride (ex.: DE430). Use `MOON_ME` (Mean Earth/polar axis) para
+coordenadas de superfície/cartografia e `MOON_PA` (Principal Axis) para
+dinâmica. Para inspecionar qualquer kernel:
+`python scripts/inspect_kernels.py kernels/<arquivo>`.
+
 **Conceitos principais:**
 
 - **Tempo ET (Ephemeris Time / TDB):** segundos desde J2000.
@@ -118,12 +134,14 @@ grandes).
 ```python
 import spiceypy as spice
 
-spice.furnsh("kernels/naif0012.tls")
-spice.furnsh("kernels/de440s.bsp")
+spice.furnsh("kernels/lunar.tm")   # carrega todos os kernels (rodar da raiz)
 
 et = spice.str2et("2026-10-29T12:00:00")
 pos, lt = spice.spkpos("MOON", et, "J2000", "LT+S", "EARTH")
 print(pos, "km  | tempo-luz:", lt, "s")
+
+rot = spice.pxform("J2000", "MOON_ME", et)   # inercial -> fixo na Lua
+radii = spice.bodvrd("MOON", "RADII", 3)[1]  # [1737.4, 1737.4, 1737.4] km
 spice.kclear()
 ```
 

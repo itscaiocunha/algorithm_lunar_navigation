@@ -11,6 +11,7 @@ __pycache__/
 # Kernels SPICE (arquivos grandes, baixados sob demanda)
 kernels/*
 !kernels/.gitkeep
+!kernels/lunar.tm
 
 # IDE / SO
 .vscode/
