@@ -70,7 +70,7 @@ def test_visible_disk_fraction(d, expected):
 @pytest.mark.parametrize("elev, expected", [(1.0, 1.0), (-1.0, 0.0), (0.0, 0.5)])
 def test_flat_sphere(elev, expected):
     res = pole_pixel_fraction(flat_dem(), sun_at(POLE, elev, [1, 0, 0]))
-    assert res.sun_elevation_deg.item() == pytest.approx(elev, abs=1e-6)
+    assert res.elevation_deg.item() == pytest.approx(elev, abs=1e-6)
     assert res.fraction.item() == pytest.approx(expected, abs=0.01)
 
 

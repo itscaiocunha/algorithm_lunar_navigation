@@ -9,7 +9,8 @@ Projeto algorítmico de navegação lunar em Python, usando **NumPy**,
 alg_lunar_navigator/
 ├── src/lunar_navigator/   # código-fonte
 │   ├── api.py             #   app FastAPI
-│   ├── solar.py           #   SPICE: elevação/azimute do Sol num ponto
+│   ├── ephemeris.py       #   SPICE: posição, elevação e azimute do Sol e da Terra
+│   ├── link.py            #   estados por pixel: energia, enlace DTE, Zona de Ouro
 │   ├── terrain.py         #   DEM LOLA (GeoTIFF) como matriz NumPy
 │   ├── illumination.py    #   ray-casting vetorizado de luz/sombra
 │   ├── horizon.py         #   horizontes pré-calculados (iluminação instantânea)
@@ -58,7 +59,7 @@ Documentação interativa em <http://127.0.0.1:8000/docs>.
 ```powershell
 python scripts/elevacao_solar.py      # elevação do Sol num ponto (esfera lisa)
 python scripts/mapa_iluminacao.py     # luz/sombra com relevo LOLA -> output/
-python scripts/mapa_anual.py          # % do tempo iluminado em 2027 + Picos da Luz Eterna
+python scripts/mapa_anual.py          # 2027: Sol, Terra (DTE) e Zona de Ouro + candidatos a pouso
 ```
 
 ## Dashboard web
@@ -70,9 +71,9 @@ cd frontend; npm install; npm run build; cd ..
 python scripts\servidor.py     # sobe a API e abre http://127.0.0.1:8000 no navegador
 ```
 
-- **Iluminação num instante:** mapa 2D (deck.gl), comparação lado a lado e relevo 3D
-  (React Three Fiber); clique em qualquer ponto para traçar o raio até o Sol.
-- **Análise anual:** % do tempo iluminado, sombras permanentes e Picos da Luz Eterna.
+- **Iluminação num instante:** Sol (energia), Terra (rádio, hachura) e Zona de Ouro em 2D (deck.gl),
+  Energia × Rádio lado a lado e relevo 3D (React Three Fiber); tooltip com a telemetria do pixel.
+- **Análise anual:** Sol, visada para a Terra, Zona de Ouro e candidatos a pouso pela maior janela contínua.
 - **Metodologia:** pipeline, validação e limitações.
 
 O modo rápido e a aba anual exigem rodar `scripts/mapa_anual.py` uma vez (gera os caches).

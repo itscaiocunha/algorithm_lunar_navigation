@@ -6,7 +6,7 @@ import { MethodologyView } from './components/MethodologyView'
 import { ServerOffline } from './components/ServerOffline'
 import { cx } from './lib/view'
 import { api, ServerUnavailableError } from './lib/api'
-import type { Annual, Basemap, Info, Terrain } from './lib/api'
+import type { Basemap, Info, Terrain } from './lib/api'
 
 type Tab = 'instant' | 'annual' | 'method'
 
@@ -21,8 +21,6 @@ export default function App() {
   const [info, setInfo] = useState<Info | null>(null)
   const [basemap, setBasemap] = useState<Basemap | null>(null)
   const [terrain, setTerrain] = useState<Terrain | null>(null)
-  const [annual, setAnnual] = useState<Annual | null>(null)
-  const [annualError, setAnnualError] = useState<string | null>(null)
   const [offline, setOffline] = useState<string | null>(
     location.protocol === 'file:' ? 'Esta página foi aberta direto do disco (file://), então não há servidor para responder.' : null,
   )
@@ -41,11 +39,6 @@ export default function App() {
     api.terrain().then(setTerrain).catch(() => { terrainRequested.current = false })
   }, [])
 
-  useEffect(() => {
-    if (tab !== 'annual' || annual || annualError || !info) return
-    const year = info.annual_years.at(-1) ?? 2027
-    api.annual(year).then(setAnnual).catch((e) => setAnnualError(e.message))
-  }, [tab, annual, annualError, info])
 
   return (
     <div className="flex h-full flex-col">
@@ -83,7 +76,7 @@ export default function App() {
               <InstantView info={info} basemap={basemap} terrain={terrain} requestTerrain={requestTerrain} onServerDown={setOffline} />
             </div>
             {tab === 'annual' && (
-              <AnnualView annual={annual} error={annualError} basemap={basemap} terrain={terrain} requestTerrain={requestTerrain} />
+              <AnnualView year={info.annual_years.at(-1) ?? 2027} basemap={basemap} terrain={terrain} requestTerrain={requestTerrain} />
             )}
             {tab === 'method' && <MethodologyView />}
           </>

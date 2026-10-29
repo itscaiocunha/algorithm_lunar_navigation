@@ -39,3 +39,8 @@ export function addHours(local: string, hours: number): string {
   d.setUTCHours(d.getUTCHours() + hours)
   return d.toISOString().slice(0, 19)
 }
+
+/** Ângulo com sinal explícito: +1,20° / −0,10°. */
+export function signed(value: number, digits = 2): string {
+  return `${value >= 0 ? '+' : '−'}${fmt(Math.abs(value), digits)}°`
+}

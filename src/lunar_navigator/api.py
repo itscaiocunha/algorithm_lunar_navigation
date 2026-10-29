@@ -115,7 +115,7 @@ def api_illumination(
     lon: float = Query(..., ge=-360, le=360, examples=[0.0]),
     year: int = Query(2027, description="ano da análise anual a anexar, se existir"),
 ) -> dict:
-    """Fração do disco solar visível num ponto (ray-casting de um único pixel, ~50 ms)."""
+    """Telemetria de um ponto: Sol (energia) e Terra (enlace DTE), com ray-casting exato de 1 pixel."""
     return _call(_service().point, utc, lat, lon, _annual(year))
 
 
@@ -127,7 +127,7 @@ def api_map(
     formato: str = Query("png", pattern="^(png|geotiff)$"),
     half_size_km: float = Query(config.HALF_SIZE_M / 1000, ge=1, le=60),
 ):
-    """Mapa de iluminação da área: PNG em base64 (JSON) ou GeoTIFF (download)."""
+    """Mapa de Sol + Terra da área: PNG/frações em base64 (JSON) ou GeoTIFF de 3 bandas (download)."""
     svc = _service()
     if formato == "geotiff":
         data = _call(svc.map_geotiff, utc, modo, half_size_km * 1000)
@@ -149,12 +149,16 @@ def api_terrain(step: int = Query(3, ge=1, le=10, description="fator de reduçã
 
 
 @app.get("/api/annual")
-def api_annual(year: int = 2027) -> dict:
-    """Mapa de calor anual (% do tempo iluminado), sombras permanentes e Picos da Luz Eterna."""
+def api_annual(
+    year: int = 2027,
+    metric: str = Query("golden_window", pattern="^(golden_window|golden_pct|illumination_pct|earth_pct)$",
+                        description="golden_window = maior janela contínua Sol + Terra"),
+) -> dict:
+    """Mapa anual (Sol, Terra e Zona de Ouro), sombras permanentes e candidatos a pouso."""
     data = _annual(year)
     if data is None:
-        raise HTTPException(404, f"Análise de {year} não encontrada: rode scripts/mapa_anual.py --ano {year}")
-    return _service().annual_payload(data)
+        raise HTTPException(404, f"Análise Sol + Terra de {year} não encontrada: rode scripts/mapa_anual.py --ano {year}")
+    return _call(_service().annual_payload, data, metric)
 
 
 # Dashboard (precisa vir depois das rotas para não encobri-las)

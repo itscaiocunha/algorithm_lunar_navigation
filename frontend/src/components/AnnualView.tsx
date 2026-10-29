@@ -1,25 +1,49 @@
-import { Box, Map as MapIcon, Mountain, Snowflake, Sun, Terminal } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { Annual, Basemap, Peak, Terrain } from '../lib/api'
+import { Antenna, Box, Map as MapIcon, Mountain, Snowflake, Sparkles, Sun, Terminal } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { api } from '../lib/api'
+import type { Annual, AnnualMetric, Basemap, Peak, Terrain } from '../lib/api'
 import { fmt } from '../lib/geo'
-import { initialViewState, type ViewState, cx } from '../lib/view'
+import { cx, initialViewState, type ViewState } from '../lib/view'
 import { MapView2D, type MapPoint } from './MapView2D'
 import { Terrain3D } from './Terrain3D'
-import { Card, InfernoLegend, KeyValue, Kpi, Segmented } from './ui'
+import { Card, KeyValue, Kpi, Segmented } from './ui'
 
 const PEAK_COLOR: [number, number, number] = [125, 255, 122]
 
-export function AnnualView({ annual, error, basemap, terrain, requestTerrain }: {
-  annual: Annual | null
-  error: string | null
+// mesmas escalas de cores do backend (matplotlib)
+const GRADIENTS: Record<Annual['metric']['colormap'], string> = {
+  viridis: 'linear-gradient(90deg, #440154, #3b528b, #21918c, #5ec962, #fde725)',
+  inferno: 'linear-gradient(90deg, #000004, #420a68, #932667, #dd513a, #fca50a, #fcffa4)',
+  cividis: 'linear-gradient(90deg, #00204d, #414d6b, #7c7b78, #bcaf6f, #ffea46)',
+}
+
+const METRICS: { value: AnnualMetric; label: ReactNode }[] = [
+  { value: 'golden_window', label: <><Sparkles className="size-3.5" /> Janela de ouro</> },
+  { value: 'golden_pct', label: <>Ouro %</> },
+  { value: 'illumination_pct', label: <><Sun className="size-3.5" /> Sol %</> },
+  { value: 'earth_pct', label: <><Antenna className="size-3.5" /> Terra %</> },
+]
+
+const days = (h: number) => fmt(h / 24, 1)
+
+export function AnnualView({ year, basemap, terrain, requestTerrain }: {
+  year: number
   basemap: Basemap
   terrain: Terrain | null
   requestTerrain: () => void
 }) {
+  const [metric, setMetric] = useState<AnnualMetric>('golden_window')
+  const [annual, setAnnual] = useState<Annual | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<'2d' | '3d'>('2d')
   const [selected, setSelected] = useState<number>(1)
   const [viewState, setViewState] = useState<ViewState>(() => initialViewState(basemap.bounds, window.innerHeight - 190))
 
+  useEffect(() => {
+    let alive = true
+    api.annual(year, metric).then((a) => alive && setAnnual(a)).catch((e) => alive && setError(e.message))
+    return () => { alive = false }
+  }, [year, metric])
   useEffect(() => { if (view === '3d') requestTerrain() }, [view, requestTerrain])
 
   if (error) return <MissingAnnual message={error} />
@@ -29,33 +53,35 @@ export function AnnualView({ annual, error, basemap, terrain, requestTerrain }: 
   const points: MapPoint[] = annual.peaks.map((p) => ({
     id: String(p.rank), x_m: p.x_m, y_m: p.y_m, color: PEAK_COLOR, label: String(p.rank), selected: p.rank === selected,
   }))
+  const m = annual.metric
 
   return (
-    <div className="grid h-full grid-cols-[380px_1fr] gap-5">
+    <div className="grid h-full grid-cols-[400px_1fr] gap-5">
       <aside className="space-y-4 overflow-y-auto pr-1 pb-4">
         <Card>
-          <h2 className="text-lg font-semibold text-slate-100">Picos da Luz Eterna · {annual.year}</h2>
+          <h2 className="text-lg font-semibold text-slate-100">Candidatos a pouso · {annual.year}</h2>
           <p className="mt-1.5 text-[13px] leading-relaxed text-slate-400">
-            Um local de pouso Artemis ideal tem <b className="text-sun-300">Sol quase contínuo</b> (energia e temperatura estável)
-            e fica <b className="text-ice-400">perto de sombra permanente</b>, onde o gelo de água pode estar preso.
+            A métrica de portfólio não é o tempo total de Sol, e sim a <b className="text-emerald-300">maior janela contínua com Sol E
+            Terra</b>: um local com menos Sol, cujas janelas de luz coincidem com as de comunicação, vale mais que um com mais Sol e a
+            Terra oculta justamente nos picos de energia.
           </p>
           <div className="mt-4 grid grid-cols-3 gap-2">
-            <Kpi value={`${fmt(annual.stats.max_illumination_pct, 1)}%`} label="melhor pixel" />
-            <Kpi value={fmt(annual.stats.over_50pct_km2, 1)} label="km² com Sol > 50%" />
+            <Kpi value={<span className="text-emerald-300">{fmt(annual.stats.max_golden_window_d, 1)} d</span>} label="maior janela de ouro" />
+            <Kpi value={fmt(annual.stats.golden_7d_km2, 1)} label="km² com janela ≥ 7 dias" />
             <Kpi value={fmt(annual.stats.psr_km2, 0)} label="km² sem Sol no ano" tone="ice" />
           </div>
           <p className="tabular mt-3 text-[11px] text-slate-500">
-            {annual.meta.n_samples} instantes · {annual.meta.start_utc.slice(0, 10)} a {annual.meta.end_utc.slice(0, 10)} ·
-            a cada {annual.meta.step_hours} h
+            {annual.meta.n_samples} instantes · {annual.meta.start_utc.slice(0, 10)} a {annual.meta.end_utc.slice(0, 10)} · a cada{' '}
+            {annual.meta.step_hours} h (resolução das janelas)
           </p>
         </Card>
 
-        <Card title="Melhores pontos" icon={<Mountain className="size-4" />}>
+        <Card title="Melhores locais" icon={<Mountain className="size-4" />}>
           <table className="tabular w-full text-[12.5px]">
             <thead>
               <tr className="border-b border-space-700 text-left text-[11px] text-slate-500">
-                <th className="py-1.5 font-medium">#</th><th className="font-medium">Luz</th>
-                <th className="font-medium">Maior noite</th><th className="font-medium">Até a sombra</th>
+                <th className="py-1.5 font-medium">#</th><th className="font-medium">Janela</th><th className="font-medium">Ouro</th>
+                <th className="font-medium">Sol</th><th className="font-medium">Terra</th><th className="font-medium">PSR</th>
               </tr>
             </thead>
             <tbody>
@@ -64,51 +90,58 @@ export function AnnualView({ annual, error, basemap, terrain, requestTerrain }: 
                     className={cx('cursor-pointer border-b border-space-800 transition',
                       p.rank === selected ? 'bg-peak-400/10 text-slate-100' : 'text-slate-300 hover:bg-space-800')}>
                   <td className="py-1.5 font-semibold text-peak-400">{p.rank}</td>
-                  <td>{fmt(p.illumination_pct, 1)}%</td>
-                  <td>{fmt(p.longest_night_h / 24, 1)} d</td>
+                  <td className="font-semibold text-emerald-300">{days(p.longest_golden_h)} d</td>
+                  <td>{fmt(p.golden_pct, 0)}%</td>
+                  <td>{fmt(p.illumination_pct, 0)}%</td>
+                  <td>{fmt(p.any_earth_pct, 0)}%</td>
                   <td>{fmt(p.distance_to_psr_km, 1)} km</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p className="mt-2 text-[11px] text-slate-500">Ordenados pela maior janela contínua Sol + Terra. Clique para localizar.</p>
         </Card>
 
         {peak && <PeakDetail peak={peak} />}
 
         <Card title="Como ler">
-          <InfernoLegend left="0%" middle="50%" right="100% do tempo com Sol" />
+          <div className="h-2.5 rounded-full" style={{ background: GRADIENTS[m.colormap] }} />
+          <div className="mt-1 flex justify-between text-[11px] text-slate-500">
+            <span>0</span><span>{m.label}</span><span>{fmt(m.vmax, 0)} {m.unit}</span>
+          </div>
           <ul className="mt-3 space-y-1.5 text-[12.5px] leading-relaxed text-slate-300">
-            <li><Sun className="mr-1 inline size-3.5 text-sun-400" />Cor = % do tempo com Sol (média do disco visível).</li>
-            <li><Snowflake className="mr-1 inline size-3.5 text-ice-400" /><b className="text-ice-400">Ciano</b> = sem Sol em todo o
-              período: candidata a <b>sombra permanente</b> (armadilha fria).</li>
-            <li><span className="mr-1 inline-block size-2.5 rounded-full border-2 border-peak-400" />Círculos verdes = máximos locais
-              de iluminação, separados ≥ 1,5 km.</li>
-            <li><b>Maior noite</b>: maior intervalo contínuo sem Sol — dimensiona baterias.</li>
+            <li><Snowflake className="mr-1 inline size-3.5 text-ice-400" /><b className="text-ice-400">Ciano</b> = sem Sol em todo o período:
+              candidata a <b>sombra permanente</b> (armadilha fria de gelo).</li>
+            <li><span className="mr-1 inline-block size-2.5 rounded-full border-2 border-peak-400" />Círculos verdes = melhores locais,
+              separados ≥ 1,5 km.</li>
+            <li><b>Maior noite</b> dimensiona baterias; <b>maior LOS</b> dimensiona a autonomia sem comando da Terra.</li>
           </ul>
           <p className="mt-3 text-[11px] leading-relaxed text-slate-500">
-            Um ano não é um ciclo completo: a geometria Sol–Lua se repete a cada ~18,6 anos.
+            Um ano não é um ciclo completo: a geometria Sol–Terra–Lua se repete a cada ~18,6 anos.
           </p>
         </Card>
       </aside>
 
       <section className="flex min-h-0 flex-col gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Segmented value={view} onChange={setView} options={[
             { value: '2d', label: <><MapIcon className="size-3.5" /> Mapa</> },
             { value: '3d', label: <><Box className="size-3.5" /> Relevo 3D</> },
           ]} />
-          <span className="ml-auto text-xs text-slate-500">Clique num pico para selecioná-lo</span>
+          <Segmented value={metric} onChange={(v) => { setAnnual(null); setMetric(v) }} options={METRICS} />
+          <span className="ml-auto text-xs text-slate-500">Clique num local para selecioná-lo</span>
         </div>
         <div className="relative min-h-0 flex-1">
           {view === '2d' ? (
-            <MapView2D overlays={[{ id: 'annual', image: annual.image, bounds: annual.bounds }]} points={points}
+            <MapView2D overlays={[{ id: `annual-${m.id}`, image: annual.image, bounds: annual.bounds }]} points={points}
                        viewState={viewState} onViewStateChange={setViewState}
                        onClickMap={(_x, _y, id) => id && setSelected(Number(id))}
-                       caption={`Iluminação solar ${annual.year} · ciano = sombra o ano todo`} />
+                       caption={`${m.label} · ${annual.year} · ciano = sombra o ano todo`} />
           ) : (
             <div className="h-full overflow-hidden rounded-xl border border-space-700">
               {terrain ? (
-                <Terrain3D terrain={terrain} baseUrl={basemap.image} textureUrl={annual.image} exaggeration={3} marker={peak && { x_m: peak.x_m, y_m: peak.y_m }} />
+                <Terrain3D terrain={terrain} baseUrl={basemap.image} layers={[{ url: annual.image, alpha: 0.85 }]} exaggeration={3}
+                           marker={peak && { x_m: peak.x_m, y_m: peak.y_m }} />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-slate-500">Carregando relevo…</div>
               )}
@@ -122,13 +155,16 @@ export function AnnualView({ annual, error, basemap, terrain, requestTerrain }: 
 
 function PeakDetail({ peak: p }: { peak: Peak }) {
   return (
-    <Card title={`Pico #${p.rank}`} icon={<Sun className="size-4" />}>
+    <Card title={`Local #${p.rank}`} icon={<Sparkles className="size-4" />}>
       <KeyValue rows={[
         ['Lat / lon', `${fmt(p.lat, 4)}° / ${fmt(p.lon, 2)}°`],
         ['Altitude', `${fmt(p.height_m, 0)} m`],
+        ['Maior janela Sol + Terra', `${days(p.longest_golden_h)} dias`],
+        ['Tempo em Zona de Ouro', `${fmt(p.golden_pct, 1)}%`],
         ['Tempo com Sol (disco)', `${fmt(p.illumination_pct, 1)}%`],
-        ['Algum Sol visível', `${fmt(p.any_sun_pct, 1)}%`],
-        ['Maior noite contínua', `${fmt(p.longest_night_h / 24, 1)} dias`],
+        ['Tempo com Terra visível', `${fmt(p.any_earth_pct, 1)}%`],
+        ['Maior noite contínua', `${days(p.longest_night_h)} dias`],
+        ['Maior perda de sinal (LOS)', `${days(p.longest_los_h)} dias`],
         ['Sombra permanente mais próxima', `${fmt(p.distance_to_psr_km, 2)} km`],
       ]} />
     </Card>

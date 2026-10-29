@@ -26,7 +26,7 @@ from rasterio.transform import from_origin  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lunar_navigator import illumination, solar, terrain  # noqa: E402
+from lunar_navigator import illumination, ephemeris, terrain  # noqa: E402
 
 
 def parse_args():
@@ -44,8 +44,8 @@ def parse_args():
 
 def main():
     args = parse_args()
-    solar.load_kernels()
-    et = solar.utc_to_et(args.utc)
+    ephemeris.load_kernels()
+    et = ephemeris.utc_to_et(args.utc)
     sun = illumination.sun_position_m(et)
 
     t0 = time.perf_counter()
@@ -62,7 +62,7 @@ def main():
     t2 = time.perf_counter()
     lit = res.fraction > 0
     print(f"Ray-casting: {t2 - t1:.1f} s, {res.steps} passos, {area.heights.size / (t2 - t1):,.0f} px/s")
-    print(f"Elevação do Sol na área: {res.sun_elevation_deg.min():+.2f}° a {res.sun_elevation_deg.max():+.2f}°")
+    print(f"Elevação do Sol na área: {res.elevation_deg.min():+.2f}° a {res.elevation_deg.max():+.2f}°")
     print(f"Pixels com Sol visível: {lit.mean():.1%}  (disco inteiro: {(res.fraction == 1).mean():.1%})")
 
     args.out.mkdir(parents=True, exist_ok=True)

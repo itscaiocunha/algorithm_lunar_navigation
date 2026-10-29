@@ -1,4 +1,4 @@
-"""Compara o ray-casting vetorizado com um loop pixel a pixel e com o solar.py.
+"""Compara o ray-casting vetorizado com um loop pixel a pixel e com o ephemeris.py.
 
 Uso:  python scripts/benchmark_iluminacao.py
 """
@@ -12,31 +12,31 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lunar_navigator import illumination, solar, terrain  # noqa: E402
+from lunar_navigator import illumination, ephemeris, terrain  # noqa: E402
 
 UTC = "2026-11-14 12:00:00 UTC"
 N_LOOP = 300  # pixels medidos no modo loop (o resto é extrapolado)
 
 
 def main():
-    solar.load_kernels()
-    et = solar.utc_to_et(UTC)
+    ephemeris.load_kernels()
+    et = ephemeris.utc_to_et(UTC)
     sun = illumination.sun_position_m(et)
     dem = terrain.load_dem()
     area = dem.crop(0.0, 0.0, 30_000.0)
     total = area.heights.size
 
-    # 1. Consistência com o pipeline SPICE (solar.py), mesmo ponto e raio
+    # 1. Consistência com o pipeline SPICE (ephemeris.py), mesmo ponto e raio
     row, col = area.shape[0] // 3, area.shape[1] // 3
     single = terrain.DEM(area.heights[row:row + 1, col:col + 1],
                          area.x0 + col * area.pixel, area.y0 - row * area.pixel, area.pixel, area.radius)
     lat, lon = (v.item() for v in single.lat_lon())
     res = illumination.compute_illumination(single, dem, sun)
     point_km = single.surface_points().reshape(3) / 1000
-    vec, _ = solar.sun_vector(et, point_km)
-    elev_spice, _ = solar.topocentric_angles(vec, point_km)
+    vec, _ = ephemeris.sun_vector(et, point_km)
+    elev_spice, _ = ephemeris.topocentric_angles(vec, point_km)
     print(f"Ponto lat {lat:.4f}°, lon {lon:.4f}°")
-    print(f"  elevação do Sol  vetorizado: {res.sun_elevation_deg.item():+.6f}°   solar.py/SPICE: {elev_spice:+.6f}°")
+    print(f"  elevação do Sol  vetorizado: {res.elevation_deg.item():+.6f}°   ephemeris.py/SPICE: {elev_spice:+.6f}°")
 
     # 2. Velocidade: vetorizado vs. um pixel por vez
     t0 = time.perf_counter()

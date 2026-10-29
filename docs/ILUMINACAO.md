@@ -31,7 +31,8 @@ curl.exe -o data/dem/LDEM_80S_80MPP_ADJ.TIF https://pgda.gsfc.nasa.gov/data/LOLA
 |---|---|
 | `terrain.py` | Lê o GeoTIFF com **rasterio** e converte mapa (x, y) ↔ vetor 3D em MOON_ME |
 | `illumination.py` | Ray-casting vetorizado: horizonte na direção do Sol e fração do disco visível |
-| `solar.py` | SPICE: tempo, observador, vetor do Sol, elevação/azimute (já existente) |
+| `ephemeris.py` | SPICE: tempo, observador, vetores do Sol e da Terra, elevação/azimute |
+| `link.py` | Estados por pixel: energia, enlace DTE (níveis heurísticos) e Zona de Ouro |
 
 ## O algoritmo
 
@@ -82,7 +83,7 @@ Saídas em `output/`: PNG (topografia + iluminação) e GeoTIFF georreferenciado
 Os três produzem resultados idênticos. Processar em blocos mantém os arrays
 temporários no cache da CPU (a operação é limitada por banda de memória).
 A elevação do Sol calculada pelo motor vetorizado coincide com a do
-`solar.py`/SPICE até 10⁻⁶ grau.
+`ephemeris.py`/SPICE até 10⁻⁶ grau.
 
 ## Validação (`tests/test_illumination.py`)
 
@@ -166,6 +167,90 @@ cache de horizontes, ~2,5× mais pixels).
 
 ---
 
+# Comunicação direta com a Terra (DTE) e Zona de Ouro
+
+## A física: libração, não rotação
+
+A Lua tem rotação sincronizada, então a Terra não nasce nem se põe: ela paira
+quase fixa no céu, perto do meridiano 0° (+Y do mapa). O que a esconde é a
+**libração**. Medido com SPICE no polo sul, de 2026 a 2035, a cada 6 h:
+
+| Grandeza | Valor |
+|---|---|
+| Elevação da Terra no polo | −7,10° a +6,62° |
+| Direção (longitude no MOON_ME) | −8,0° a +8,1° |
+| Diâmetro aparente do disco | 1,80° a 2,05° (≈ 4× o Sol) |
+| Atraso do sinal (LT+S) | 1,189 a 1,357 s |
+| Terra acima do horizonte liso, no polo | 49,1% do tempo |
+
+Para um ponto da superfície, a paralaxe da Terra chega a 0,27° (raio lunar /
+distância Terra-Lua), por isso a direção é calculada pixel a pixel (`spkcpo`
+e `HorizonMap.target_angles`), não a partir do centro da Lua.
+
+## Reaproveitamento do mapa de horizontes, com uma ressalva
+
+O mesmo cache de horizontes serve ao Sol e à Terra: em cada instante,
+compara-se a elevação de cada corpo com o horizonte na direção dele, sem
+traçar raios novos. **Porém o cache original não servia:** para acelerar o
+Sol, os horizontes eram cortados em colatitude + 1,9° (o Sol nunca sobe mais
+que isso). Uma montanha de 5° ficava guardada como ~2°, e a Terra a 4° pareceria
+visível. O teto agora é colatitude + 8,5° (`horizon.EARTH_LIMIT_DEG`), e a chave do
+cache inclui o teto, para que um cache antigo nunca seja reutilizado por
+engano. O teste `test_sun_only_cache_would_hide_earth_occlusion` reproduz o erro.
+
+## Estados lógicos por pixel (`link.py`)
+
+| Estado | Condição | Cor no mapa |
+|---|---|---|
+| Sobrevivência | fração do Sol > 0 | amarelo/laranja (escala inferno) |
+| Operação | fração da Terra > 0 | hachura diagonal ciano |
+| **Zona de Ouro** | as duas | verde (emerald) |
+| Nenhum | — | preto |
+
+Níveis de enlace por fração visível do disco da Terra: banda larga (≥ 99,9%),
+RF degradada (≥ 50%), telemetria de emergência (> 0) e LOS (= 0). **Esses limiares
+são heurísticos.** O enlace real depende de qual estação da DSN está na parte
+visível do disco e da difração na borda do relevo (ITU-R P.526); um link budget
+completo é o próximo passo.
+
+## Métricas anuais adicionais
+
+| Métrica | Significado |
+|---|---|
+| `earth_pct` / `any_earth_pct` | Média da fração da Terra / % dos instantes com alguma Terra visível |
+| `longest_los_h` | Maior sequência contínua sem Terra (autonomia sem comando) |
+| `golden_pct` | % dos instantes com Sol E Terra |
+| `longest_golden_h` | **Maior janela contínua de Zona de Ouro**: a métrica de portfólio que ordena os candidatos a pouso |
+
+Um local com 60% de Sol cujas janelas coincidem com as da Terra vence um com
+80% de Sol e a Terra oculta nos picos de energia (`tests/test_annual.py`).
+
+## Resultado 2027 com Sol + Terra (±30 km do polo, a cada 12 h)
+
+Validação dos horizontes contra o motor direto (3 instantes aleatórios):
+visível/oculto iguais em 99,68–99,87% dos pixels para o Sol e **99,86–100%
+para a Terra**. Tempo: 730 instantes × 2 corpos em 178 s (cache já pronto); o
+cache com teto da Terra levou 2038 s, uma única vez (6 processos).
+
+| Grandeza | Valor |
+|---|---|
+| Sem Sol o ano todo (PSR) | 595,8 km² (16,6% da área) |
+| Terra nunca visível | 1291 km² |
+| Alguma Zona de Ouro no ano | 2024 km² |
+| Janela de ouro contínua ≥ 7 dias | 1299 km² |
+| Maior janela de ouro | 17,5 dias (88,84°S, 121,6°E; 1524 m) |
+
+**Observação: a métrica satura.** Os dez melhores locais têm janelas de
+16,5 a 17,5 dias. O teto vem da libração: a Terra fica visível só em parte de
+cada ciclo de ~27 dias. Com passo de 12 h, as diferenças entre os candidatos
+são de um ou dois passos, então o desempate por % de Zona de Ouro pesa muito.
+Exemplo: o nº 2 (17,0 d) tem 44% de Zona de Ouro e 70% de Sol, contra 33% e 44%
+do nº 1 (17,5 d). Para separar melhor os candidatos, rode com
+`--passo-horas 2`, ou use uma métrica composta.
+
+Vários dos melhores locais ficam perto de 88,8°S, 120–124°E, a mesma região
+do ponto mais iluminado apontado por Bussey et al. (2010), 88,74°S, 124,5°E.
+
 # API e dashboard
 
 ```powershell
@@ -175,11 +260,11 @@ uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
 | Endpoint | Retorno | Tempo medido |
 |---|---|---|
 | `GET /` | Dashboard web (build de `frontend/`) | — |
-| `GET /api/illumination?utc=2026-11-20T00:00:00Z&lat=-89.9&lon=0` | Fração, status, elevação/azimute do Sol, horizonte, altitude e estatística anual do pixel | ~0,15 s |
-| `GET /api/map?utc=...&modo=completo` | PNG base64 + limites + estatísticas | ~10,5 s |
-| `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,3 s |
-| `GET /api/map?utc=...&formato=geotiff` | GeoTIFF para download | — |
-| `GET /api/annual?year=2027` | Mapa de calor anual + sombras permanentes + picos | ~0,8 s |
+| `GET /api/illumination?utc=2026-11-20T00:00:00Z&lat=-89.9&lon=0` | Telemetria do pixel: Sol e Terra (fração, elevação, azimute, horizonte, nível de energia/enlace, atraso de sinal), status e estatística anual | ~0,3 s |
+| `GET /api/map?utc=...&modo=completo` | PNG do Sol + frações cruas do Sol e da Terra (uint8 base64) + direções + estatísticas dos 4 estados | ~30 s (2 ray-castings) |
+| `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,5 s |
+| `GET /api/map?utc=...&formato=geotiff` | GeoTIFF de 3 bandas: `sun_fraction`, `earth_fraction`, `golden_zone` | — |
+| `GET /api/annual?year=2027&metric=golden_window` | Mapa anual (`golden_window`, `golden_pct`, `illumination_pct` ou `earth_pct`) + sombras permanentes + candidatos a pouso | ~0,5 s |
 | `GET /api/basemap` | Relevo sombreado da área | ~0,7 s |
 | `GET /api/terrain?step=3` | Altitudes 250×250 (Float32 base64) para a vista 3D | — |
 | `GET /api/info` | DEM, área, caches disponíveis | — |

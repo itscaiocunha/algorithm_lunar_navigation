@@ -14,7 +14,7 @@ import spiceypy as spice
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from lunar_navigator import solar  # noqa: E402
+from lunar_navigator import ephemeris  # noqa: E402
 
 # Borda da cratera Shackleton, polo sul lunar
 DEFAULT_LAT = -89.9
@@ -30,22 +30,22 @@ def main() -> None:
     args = parser.parse_args()
 
     print("1. Carregando kernels...")
-    solar.load_kernels()
+    ephemeris.load_kernels()
     print(f"   {spice.ktotal('ALL')} kernels na memória")
 
-    et = solar.utc_to_et(args.utc)
+    et = ephemeris.utc_to_et(args.utc)
     print(f"2. {args.utc}  ->  ET = {et:.3f} s desde J2000")
 
-    observer = solar.surface_point(args.lat, args.lon)
+    observer = ephemeris.surface_point(args.lat, args.lon)
     print(f"3. Observador lat {args.lat}°, lon {args.lon}°")
-    print(f"   (X, Y, Z) em {solar.FRAME} = {np.array2string(observer, precision=3)} km")
+    print(f"   (X, Y, Z) em {ephemeris.FRAME} = {np.array2string(observer, precision=3)} km")
 
-    vector, light_time = solar.sun_vector(et, observer)
-    print(f"4. Vetor observador -> Sol ({solar.FRAME}, {solar.ABCORR})")
+    vector, light_time = ephemeris.sun_vector(et, observer)
+    print(f"4. Vetor observador -> Sol ({ephemeris.FRAME}, {ephemeris.ABCORR})")
     print("   (X, Y, Z) = (" + ", ".join(f"{c:,.0f}" for c in vector) + ") km")
     print(f"   distância {np.linalg.norm(vector):,.0f} km, tempo-luz {light_time:.1f} s")
 
-    elevation, azimuth = solar.topocentric_angles(vector, observer)
+    elevation, azimuth = ephemeris.topocentric_angles(vector, observer)
     print("5. Coordenadas no horizonte local")
     print(f"   Elevação do Sol: {elevation:+.4f}°  ({'acima' if elevation > 0 else 'abaixo'} do horizonte)")
     print(f"   Azimute:         {azimuth:.2f}°  (a partir do Norte, sentido horário)")

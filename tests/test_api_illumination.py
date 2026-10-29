@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from rasterio.io import MemoryFile
 
-from lunar_navigator import config, solar
+from lunar_navigator import config, ephemeris
 from lunar_navigator.api import app
 from lunar_navigator.terrain import DEM
 
@@ -21,26 +21,46 @@ def client():
         yield c
 
 
+def pixel_latlon(p):
+    """Lat/lon do centro do pixel em que a API encaixou o ponto."""
+    u = DEM(np.zeros((1, 1)), 0, 0, 80.0, 1_737_400.0).to_unit_vectors(np.array(p["x_m"]), np.array(p["y_m"]))
+    return np.degrees(np.arcsin(u[2])), np.degrees(np.arctan2(u[1], u[0]))
+
+
+def decode_fraction(b64, shape):
+    return np.frombuffer(base64.b64decode(b64), dtype=np.uint8).reshape(shape) / 255.0
+
+
 def test_info(client):
     info = client.get("/api/info").json()
     assert info["pixel_m"] == 80.0
     assert info["area_shape"] == [750, 750]
     assert info["kernels_loaded"] == 6
+    assert info["horizon_limit_deg"] >= 8.13  # cobre a Terra
 
 
-def test_point_matches_solar_pipeline(client):
-    r = client.get("/api/illumination", params={"utc": UTC, "lat": -89.9, "lon": 0.0})
-    assert r.status_code == 200
-    p = r.json()
-    assert 0.0 <= p["fraction"] <= 1.0
-    assert p["status"] in {"iluminado", "penumbra", "sombra"}
+@pytest.mark.parametrize("body, geometry", [("sun", ephemeris.sun_geometry), ("earth", ephemeris.earth_geometry)])
+def test_point_matches_ephemeris(client, body, geometry):
+    """Elevação/azimute do Sol e da Terra no ponto batem com o pipeline SPICE (ephemeris.py)."""
+    p = client.get("/api/illumination", params={"utc": UTC, "lat": -89.9, "lon": 0.0}).json()
     # A API encaixa o ponto no centro do pixel de 80 m; a 3 km do polo isso muda a longitude
-    # em ~1°. Comparamos com o solar.py exatamente nesse centro (a altitude muda < 0,001°).
-    u = DEM(np.zeros((1, 1)), 0, 0, 80.0, 1_737_400.0).to_unit_vectors(np.array(p["x_m"]), np.array(p["y_m"]))
-    lat, lon = np.degrees(np.arcsin(u[2])), np.degrees(np.arctan2(u[1], u[0]))
-    ref = solar.sun_geometry("2026-11-14 12:00:00 UTC", lat, lon)
-    assert p["sun_elevation_deg"] == pytest.approx(ref.elevation_deg, abs=1e-3)
-    assert p["sun_azimuth_deg"] == pytest.approx(ref.azimuth_deg, abs=0.01)
+    # em ~1°. Comparamos exatamente nesse centro (a altitude do pixel muda < 0,001°).
+    ref = geometry("2026-11-14 12:00:00 UTC", *pixel_latlon(p))
+    b = p[body]
+    assert 0.0 <= b["fraction"] <= 1.0
+    assert b["elevation_deg"] == pytest.approx(ref.elevation_deg, abs=2e-3)
+    assert b["azimuth_deg"] == pytest.approx(ref.azimuth_deg, abs=0.01)
+    assert b["angular_radius_deg"] == pytest.approx(ref.angular_radius_deg, abs=1e-3)
+
+
+def test_point_engineering_fields(client):
+    p = client.get("/api/illumination", params={"utc": UTC, "lat": -89.5, "lon": 120.0}).json()
+    assert 1.18 < p["earth"]["light_time_s"] < 1.37  # atraso de sinal Terra-Lua
+    assert 0.89 < p["earth"]["angular_radius_deg"] < 1.03  # disco de ~1,8–2,05°
+    assert p["earth"]["level"] in {"banda_larga", "degradado", "emergencia", "los"}
+    assert p["sun"]["level"] in {"nominal", "parcial", "sem_energia"}
+    assert p["golden"] == (p["sun"]["fraction"] > 0 and p["earth"]["fraction"] > 0)
+    assert "·" in p["status"]
 
 
 @pytest.mark.parametrize("params, msg", [
@@ -58,27 +78,38 @@ def test_map_png_small_area(client):
     assert r.status_code == 200
     m = r.json()
     assert m["mode"] == "completo" and m["pixels"] == 50 * 50
-    assert m["image"].startswith("data:image/png;base64,")
     assert base64.b64decode(m["image"].split(",", 1)[1])[:8] == b"\x89PNG\r\n\x1a\n"
     assert m["bounds"]["x_max"] - m["bounds"]["x_min"] == pytest.approx(4000)
-    assert 0 <= m["stats"]["lit_pct"] <= 100
-    # direção do Sol no plano do mapa: vetor unitário + elevação dentro do limite polar
-    dx, dy = m["sun"]["map_dir"]
-    assert dx**2 + dy**2 == pytest.approx(1.0)
-    assert -2.0 < m["sun"]["elevation_deg"] < 2.0
+    for body, max_elev in (("sun", 2.0), ("earth", 8.2)):
+        dx, dy = m[body]["map_dir"]
+        assert dx**2 + dy**2 == pytest.approx(1.0)
+        assert abs(m[body]["elevation_deg"]) < max_elev
+    s = m["stats"]
+    # os quatro estados lógicos particionam a área
+    assert s["golden_pct"] + s["power_only_pct"] + s["comms_only_pct"] + s["none_pct"] == pytest.approx(100, abs=0.05)
+    sun = decode_fraction(m["sun_fraction_b64"], m["shape"])
+    earth = decode_fraction(m["earth_fraction_b64"], m["shape"])
+    assert 100 * np.mean((sun > 0) & (earth > 0)) == pytest.approx(s["golden_pct"], abs=0.05)
+
+
+def test_earth_sits_near_meridian_zero(client):
+    """Libração em longitude é ±8°: vista do polo, a Terra fica sempre perto da direção +Y do mapa (lon 0°)."""
+    m = client.get("/api/map", params={"utc": UTC, "half_size_km": 2}).json()
+    dx, dy = m["earth"]["map_dir"]
+    assert np.degrees(abs(np.arctan2(dx, dy))) < 9.0
+    assert 1.18 < m["earth"]["light_time_s"] < 1.37
 
 
 def test_sun_direction_matches_point_azimuth(client):
-    """map_dir no polo deve apontar para o mesmo azimuto que o ray-casting de um ponto vizinho."""
+    """map_dir no polo deve apontar para o mesmo azimute que o ray-casting de um ponto vizinho."""
     m = client.get("/api/map", params={"utc": UTC, "half_size_km": 2}).json()
     dx, dy = m["sun"]["map_dir"]
     # num ponto sobre o meridiano 0° (eixo +Y do mapa), o norte local aponta para longe do
     # polo (+Y) e o leste para +X; logo a direção do Sol no mapa é (sen az, cos az)
     p = client.get("/api/illumination", params={"utc": UTC, "lat": -89.5, "lon": 0.0}).json()
-    az = np.radians(p["sun_azimuth_deg"])
-    expected = (np.sin(az), np.cos(az))
-    assert dx == pytest.approx(expected[0], abs=0.02)
-    assert dy == pytest.approx(expected[1], abs=0.02)
+    az = np.radians(p["sun"]["azimuth_deg"])
+    assert dx == pytest.approx(np.sin(az), abs=0.02)
+    assert dy == pytest.approx(np.cos(az), abs=0.02)
 
 
 def test_terrain(client):
@@ -95,10 +126,12 @@ def test_map_geotiff(client):
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/tiff"
     with MemoryFile(r.content) as mem, mem.open() as ds:
-        band = ds.read(1)
-        assert band.shape == (50, 50)
+        assert ds.count == 3
+        assert ds.descriptions == ("sun_fraction", "earth_fraction", "golden_zone")
+        sun, earth, golden = ds.read()
+        assert sun.shape == (50, 50)
         assert ds.crs.to_dict()["proj"] == "stere"
-        assert np.all((band >= 0) & (band <= 1))
+        np.testing.assert_array_equal(golden == 1, (sun > 0) & (earth > 0))
 
 
 def test_map_fast_mode_matches_full(client):
@@ -106,7 +139,8 @@ def test_map_fast_mode_matches_full(client):
         pytest.skip("cache de horizontes ainda não gerado")
     fast = client.get("/api/map", params={"utc": UTC, "modo": "rapido"}).json()
     full = client.get("/api/map", params={"utc": UTC, "modo": "completo"}).json()
-    assert abs(fast["stats"]["lit_pct"] - full["stats"]["lit_pct"]) < 1.0
+    for key in ("lit_pct", "earth_visible_pct", "golden_pct"):
+        assert abs(fast["stats"][key] - full["stats"][key]) < 1.0, key
     assert fast["elapsed_s"] < 2.0
 
 
@@ -116,12 +150,15 @@ def test_basemap(client):
     assert b["shape"] == [750, 750]
 
 
-def test_annual(client):
-    r = client.get("/api/annual", params={"year": 2027})
-    if not config.annual_path(2027).exists():
-        assert r.status_code == 404
-        return
+@pytest.mark.parametrize("metric", ["golden_window", "golden_pct", "illumination_pct", "earth_pct"])
+def test_annual(client, metric):
+    r = client.get("/api/annual", params={"year": 2027, "metric": metric})
+    if r.status_code == 404:
+        assert "Sol + Terra" in r.json()["detail"]
+        pytest.skip("análise anual Sol + Terra ainda não gerada")
     a = r.json()
+    assert a["metric"]["id"] == metric
     assert len(a["peaks"]) == 10
-    assert a["peaks"][0]["illumination_pct"] >= a["peaks"][-1]["illumination_pct"]
+    windows = [p["longest_golden_h"] for p in a["peaks"]]
+    assert windows == sorted(windows, reverse=True)  # ordenados pela janela de ouro
     assert a["stats"]["psr_km2"] > 0

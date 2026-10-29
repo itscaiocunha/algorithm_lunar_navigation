@@ -17,6 +17,8 @@ export interface Info {
   n_azimuths: number
   annual_years: number[]
   kernels_loaded: number
+  horizon_limit_deg: number
+  annual_metrics: Record<AnnualMetric, string>
 }
 
 export interface Basemap {
@@ -39,15 +41,31 @@ export interface IlluminationMap {
   shape: [number, number]
   pixel_m: number
   bounds: Bounds
-  image: string
-  sun: { map_dir: [number, number]; elevation_deg: number }
+  image: string // fração do Sol em PNG (inferno)
+  sun_fraction_b64: string // uint8 0..255, linha a linha
+  earth_fraction_b64: string
+  sun: BodyDirection
+  earth: BodyDirection & { light_time_s: number }
   stats: {
     lit_pct: number
     full_disk_pct: number
     shadow_pct: number
     sun_elevation_min_deg: number
     sun_elevation_max_deg: number
+    earth_visible_pct: number
+    earth_full_pct: number
+    earth_elevation_min_deg: number
+    earth_elevation_max_deg: number
+    golden_pct: number
+    power_only_pct: number
+    comms_only_pct: number
+    none_pct: number
   }
+}
+
+export interface BodyDirection {
+  map_dir: [number, number] // direção no plano do mapa, vista do centro da área
+  elevation_deg: number
 }
 
 export interface AnnualAtPoint {
@@ -56,6 +74,20 @@ export interface AnnualAtPoint {
   any_sun_pct: number
   longest_night_h: number
   psr: boolean
+  any_earth_pct: number
+  longest_los_h: number
+  golden_pct: number
+  longest_golden_h: number
+}
+
+export interface BodyAtPoint {
+  fraction: number
+  elevation_deg: number
+  azimuth_deg: number
+  horizon_deg: number
+  angular_radius_deg: number
+  level: string
+  label: string
 }
 
 export interface PointIllumination {
@@ -65,11 +97,10 @@ export interface PointIllumination {
   x_m: number
   y_m: number
   height_m: number
-  fraction: number
-  status: 'iluminado' | 'penumbra' | 'sombra'
-  sun_elevation_deg: number
-  sun_azimuth_deg: number
-  horizon_deg: number
+  sun: BodyAtPoint & { level: 'nominal' | 'parcial' | 'sem_energia' }
+  earth: BodyAtPoint & { level: 'banda_larga' | 'degradado' | 'emergencia' | 'los'; light_time_s: number }
+  golden: boolean
+  status: string
   elapsed_ms: number
   annual?: AnnualAtPoint | null
 }
@@ -81,23 +112,32 @@ export interface Peak {
   x_m: number
   y_m: number
   height_m: number
+  longest_golden_h: number
+  golden_pct: number
   illumination_pct: number
   any_sun_pct: number
+  earth_pct: number
+  any_earth_pct: number
   longest_night_h: number
+  longest_los_h: number
   distance_to_psr_km: number
 }
+
+export type AnnualMetric = 'golden_window' | 'golden_pct' | 'illumination_pct' | 'earth_pct'
 
 export interface Annual {
   year: number
   meta: { n_samples: number; step_hours: number; start_utc: string; end_utc: string; pixel: number }
   bounds: Bounds
+  metric: { id: AnnualMetric; label: string; colormap: 'viridis' | 'inferno' | 'cividis'; unit: string; vmax: number }
   image: string
   peaks: Peak[]
   stats: {
     psr_km2: number
-    psr_pct: number
-    over_80pct_km2: number
-    over_50pct_km2: number
+    earth_never_km2: number
+    golden_any_km2: number
+    golden_7d_km2: number
+    max_golden_window_d: number
     max_illumination_pct: number
   }
 }
@@ -113,12 +153,13 @@ export interface Terrain {
 /** Erro de rede (servidor fora do ar) — distinto de erro de validação da API. */
 export class ServerUnavailableError extends Error {}
 
-async function get<T>(path: string, params?: Record<string, string | number>): Promise<T> {
+async function get<T>(path: string, params?: Record<string, string | number>, signal?: AbortSignal): Promise<T> {
   const query = params ? '?' + new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])) : ''
   let res: Response
   try {
-    res = await fetch(path + query)
-  } catch {
+    res = await fetch(path + query, { signal })
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
     throw new ServerUnavailableError('O servidor não respondeu')
   }
   const body = await res.json().catch(() => ({}))
@@ -131,8 +172,9 @@ export const api = {
   basemap: () => get<Basemap>('/api/basemap'),
   terrain: (step = 3) => get<Terrain>('/api/terrain', { step }),
   map: (utc: string, modo: MapMode) => get<IlluminationMap>('/api/map', { utc, modo }),
-  point: (utc: string, lat: number, lon: number) => get<PointIllumination>('/api/illumination', { utc, lat, lon }),
-  annual: (year: number) => get<Annual>('/api/annual', { year }),
+  point: (utc: string, lat: number, lon: number, signal?: AbortSignal) =>
+    get<PointIllumination>('/api/illumination', { utc, lat, lon }, signal),
+  annual: (year: number, metric: AnnualMetric) => get<Annual>('/api/annual', { year, metric }),
 }
 
 export function decodeHeights(t: Terrain): Float32Array {

@@ -6,11 +6,11 @@ import { cx } from '../lib/view'
 
 // Etapas do pipeline, com a fração aproximada do tempo total em que cada uma termina.
 const STEPS: [string, string, number][] = [
-  ['SPICE', 'Posição aparente do Sol no referencial lunar MOON_ME (DE440, tempo-luz)', 0.02],
-  ['Raios', '562 500 raios — um por pixel de 80 m — apontados para o Sol', 0.06],
+  ['SPICE', 'Posições aparentes do Sol e da Terra no referencial MOON_ME (DE440, LT+S)', 0.02],
+  ['Raios', '2 × 562 500 raios — um por pixel até o Sol e outro até a Terra', 0.06],
   ['Marcha', 'Todos os raios avançam juntos, até ~400 passos sobre o relevo LOLA', 0.72],
   ['Oclusão', 'Cada passo compara o raio com a altitude, incluindo a curvatura lunar', 0.93],
-  ['Disco solar', 'Fração do disco de 0,5° acima do horizonte → imagem', 1],
+  ['Discos', 'Fração visível do Sol (0,5°) e da Terra (~1,9°) → Zona de Ouro', 1],
 ]
 
 export function LoadingNarrative({ mode, expectedSeconds }: { mode: MapMode; expectedSeconds: number }) {

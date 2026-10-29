@@ -1,4 +1,4 @@
-"""Mapa anual de iluminação do polo sul: "Picos da Luz Eterna" e sombras permanentes.
+"""Mapa anual do polo sul: Sol (energia), Terra (comunicação DTE) e Zona de Ouro.
 
 Uso:
     python scripts/mapa_anual.py                      # 2027, a cada 12 h (método de horizontes)
@@ -24,7 +24,7 @@ from rasterio.transform import from_origin
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lunar_navigator import annual, config, horizon, illumination, render, solar, terrain  # noqa: E402
+from lunar_navigator import annual, config, horizon, illumination, render, ephemeris, terrain  # noqa: E402
 
 
 def progress_bar(label):
@@ -55,7 +55,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    solar.load_kernels()
+    ephemeris.load_kernels()
     dem = terrain.load_dem(config.DEM_PATH)
     area = dem.crop(0.0, 0.0, args.half_size_km * 1000)
     start, end = f"{args.ano}-01-01T00:00:00", f"{args.ano + 1}-01-01T00:00:00"
@@ -63,24 +63,27 @@ def main():
 
     t0 = time.perf_counter()
     if args.direto:
-        def fraction_at(et):
-            return illumination.compute_illumination(area, dem, illumination.sun_position_m(et)).fraction
+        def fractions_at(et):
+            sun = illumination.compute_illumination(area, dem, illumination.sun_position_m(et)).fraction
+            earth = illumination.compute_illumination(area, dem, illumination.earth_position_m(et),
+                                                      ephemeris.EARTH_RADIUS_M).fraction
+            return sun, earth
     else:
         cached = horizon.cache_path(area, config.DEM_PATH, args.azimutes, config.GROWTH).exists()
         print("1. Horizontes:", "lidos do cache" if cached else f"calculando {args.azimutes} azimutes em paralelo")
         hmap = horizon.compute_horizons(area, config.DEM_PATH, n_azimuths=args.azimutes, growth=config.GROWTH,
                                         workers=args.workers, progress=progress_bar("azimutes"))
         print(f"   pronto em {time.perf_counter() - t0:.0f} s")
-        fraction_at = annual.horizon_fraction(hmap)
+        fractions_at = annual.horizon_fractions(hmap)
         if args.validar:
             validate(hmap, area, dem, args.ano, args.validar)
 
-    print(f"2. Iluminação de {start[:10]} a {end[:10]}, a cada {args.passo_horas:g} h")
+    print(f"2. Sol e Terra de {start[:10]} a {end[:10]}, a cada {args.passo_horas:g} h")
     t1 = time.perf_counter()
-    result = annual.accumulate(fraction_at, area.shape, start, end, args.passo_horas, progress_bar("instantes"))
+    result = annual.accumulate(fractions_at, area.shape, start, end, args.passo_horas, progress_bar("instantes"))
     print(f"   {result.n_samples} instantes em {time.perf_counter() - t1:.1f} s")
 
-    peaks = annual.eternal_light_peaks(result, area)
+    peaks = annual.landing_candidates(result, area)
     report(result, area, peaks)
     save(result, area, peaks, args.ano)
 
@@ -90,24 +93,32 @@ def validate(hmap, area, dem, year, n):
     rng = np.random.default_rng(42)
     ets = annual.time_grid(f"{year}-01-01T00:00:00", f"{year + 1}-01-01T00:00:00", 1.0)
     for et in np.sort(rng.choice(ets, n, replace=False)):
-        sun = illumination.sun_position_m(et)
-        direct = illumination.compute_illumination(area, dem, sun).fraction
-        fast = hmap.illumination(sun)
-        agree = np.mean((direct > 0) == (fast > 0))
-        print(f"     {spice.et2utc(et, 'ISOC', 0)}  luz/sombra iguais em {agree:.2%}  "
-              f"|Δfração| médio {np.abs(direct - fast).mean():.4f}")
+        for name, pos, radius in (("Sol  ", illumination.sun_position_m(et), ephemeris.SUN_RADIUS_M),
+                                  ("Terra", illumination.earth_position_m(et), ephemeris.EARTH_RADIUS_M)):
+            direct = illumination.compute_illumination(area, dem, pos, radius).fraction
+            fast = hmap.disk_fraction(pos, radius)
+            agree = np.mean((direct > 0) == (fast > 0))
+            print(f"     {spice.et2utc(et, 'ISOC', 0)} {name}  visível/oculto iguais em {agree:.2%}  "
+                  f"|Δfração| médio {np.abs(direct - fast).mean():.4f}")
 
 
 def report(result, area, peaks):
     pix_km2 = (area.pixel / 1000) ** 2
-    print("\n=== Resultado ===")
-    print(f"Sombra em todo o período (PSR): {result.psr.sum() * pix_km2:,.1f} km²  ({result.psr.mean():.1%} da área)")
-    print(f"Pixels com Sol > 80% do tempo:  {(result.illumination_pct > 80).sum() * pix_km2:,.2f} km²")
-    print("\nPicos da Luz Eterna (máximos locais, separados ≥ 1,5 km):")
-    print(f"{'#':>2} {'lat':>9} {'lon':>9} {'alt (m)':>8} {'luz %':>6} {'Sol %':>6} {'noite máx':>10} {'dist. PSR':>9}")
+    print()
+    print("=== Resultado ===")
+    print(f"Sem Sol em todo o período (PSR):   {result.psr.sum() * pix_km2:,.1f} km²  ({result.psr.mean():.1%} da área)")
+    print(f"Terra nunca visível:               {(result.any_earth_pct == 0).sum() * pix_km2:,.1f} km²")
+    print(f"Alguma Zona de Ouro no ano:        {(result.golden_pct > 0).sum() * pix_km2:,.1f} km²")
+    print(f"Janela de ouro contínua ≥ 7 dias:  {(result.longest_golden_h >= 168).sum() * pix_km2:,.2f} km²")
+    print()
+    print("Candidatos a pouso (ordenados pela maior janela contínua Sol + Terra):")
+    print(f"{'#':>2} {'lat':>9} {'lon':>9} {'alt':>6} {'janela':>8} {'ouro %':>7} {'Sol %':>6} {'Terra %':>8} "
+          f"{'noite':>7} {'LOS':>7} {'PSR':>7}")
     for p in peaks:
-        print(f"{p['rank']:>2} {p['lat']:>9.4f} {p['lon']:>9.3f} {p['height_m']:>8.0f} {p['illumination_pct']:>6.1f} "
-              f"{p['any_sun_pct']:>6.1f} {p['longest_night_h'] / 24:>8.1f} d {p['distance_to_psr_km']:>7.2f} km")
+        print(f"{p['rank']:>2} {p['lat']:>9.4f} {p['lon']:>9.3f} {p['height_m']:>6.0f} "
+              f"{p['longest_golden_h'] / 24:>6.1f} d {p['golden_pct']:>7.1f} {p['illumination_pct']:>6.1f} "
+              f"{p['any_earth_pct']:>8.1f} {p['longest_night_h'] / 24:>5.1f} d {p['longest_los_h'] / 24:>5.1f} d "
+              f"{p['distance_to_psr_km']:>5.2f} km")
 
 
 def save(result, area, peaks, year):
@@ -115,26 +126,23 @@ def save(result, area, peaks, year):
     out.mkdir(parents=True, exist_ok=True)
     meta = dict(x0=area.x0, y0=area.y0, pixel=area.pixel, n_samples=result.n_samples,
                 step_hours=result.step_hours, start_utc=result.start_utc, end_utc=result.end_utc)
-    np.savez_compressed(config.annual_path(year), illumination_pct=result.illumination_pct.astype(np.float32),
-                        any_sun_pct=result.any_sun_pct.astype(np.float32),
-                        longest_night_h=result.longest_night_h.astype(np.float32), psr=result.psr,
-                        meta=json.dumps(meta), peaks=json.dumps(peaks))
+    arrays = {name: getattr(result, name) for name in annual.AnnualResult.ARRAYS}
+    np.savez_compressed(config.annual_path(year), meta=json.dumps(meta), peaks=json.dumps(peaks),
+                        **{k: (v if v.dtype == bool else v.astype(np.float32)) for k, v in arrays.items()})
 
     with rasterio.open(config.DEM_PATH) as src:
         crs = src.crs
-    profile = dict(driver="GTiff", height=area.shape[0], width=area.shape[1], count=4, dtype="float32", crs=crs,
-                   compress="deflate", transform=from_origin(area.x0, area.y0, area.pixel, area.pixel))
+    profile = dict(driver="GTiff", height=area.shape[0], width=area.shape[1], count=len(arrays), dtype="float32",
+                   crs=crs, compress="deflate", transform=from_origin(area.x0, area.y0, area.pixel, area.pixel))
     with rasterio.open(out / f"anual_{year}.tif", "w", **profile) as dst:
-        for i, (name, band) in enumerate([("illumination_pct", result.illumination_pct),
-                                          ("any_sun_pct", result.any_sun_pct),
-                                          ("longest_night_h", result.longest_night_h),
-                                          ("psr", result.psr)], start=1):
+        for i, (name, band) in enumerate(arrays.items(), start=1):
             dst.write(band.astype(np.float32), i)
             dst.set_band_description(i, name)
 
     (out / f"anual_{year}_picos.json").write_text(json.dumps(peaks, indent=2, ensure_ascii=False), encoding="utf-8")
     save_png(out / f"anual_{year}.png", result, area, peaks, year)
-    print(f"\nSalvo em {out}: anual_{year}.npz / .tif / .png / _picos.json")
+    print()
+    print(f"Salvo em {out}: anual_{year}.npz / .tif ({len(arrays)} bandas) / .png / _picos.json")
 
 
 def save_png(path, result, area, peaks, year):
@@ -147,11 +155,11 @@ def save_png(path, result, area, peaks, year):
                        area.y0 - area.shape[0] * area.pixel, area.y0]) / 1000
     fig, ax = plt.subplots(figsize=(9, 8), constrained_layout=True)
     ax.imshow(render.hillshade(area.heights, area.pixel), cmap="gray", extent=extent)
-    heat = np.ma.masked_where(result.psr, result.illumination_pct)
-    im = ax.imshow(heat, cmap="inferno", vmin=0, vmax=100, alpha=0.85, extent=extent)
+    heat = np.ma.masked_where(result.psr, result.longest_golden_h / 24)
+    im = ax.imshow(heat, cmap="viridis", vmin=0, alpha=0.85, extent=extent)
     psr = np.ma.masked_where(~result.psr, np.ones_like(result.illumination_pct))
     ax.imshow(psr, cmap=matplotlib.colors.ListedColormap([np.array(render.PSR_COLOR) / 255]), extent=extent, alpha=0.9)
-    fig.colorbar(im, ax=ax, label="% do tempo iluminado (média do disco solar)", shrink=0.8)
+    fig.colorbar(im, ax=ax, label="Maior janela contínua Sol + Terra (dias)", shrink=0.8)
     for p in peaks:
         ax.plot(p["x_m"] / 1000, p["y_m"] / 1000, "o", mfc="none", mec="lime", ms=10, mew=1.5)
         ax.annotate(str(p["rank"]), (p["x_m"] / 1000, p["y_m"] / 1000), color="lime", fontsize=9,

@@ -17,6 +17,9 @@ const VALIDATION: [string, string][] = [
   ['Motor vetorizado vs. mesmo cálculo pixel a pixel', 'resultados idênticos'],
   ['Projeção do mapa vs. biblioteca PROJ', 'diferença < 10⁻⁹°'],
   ['Mapa de horizontes vs. ray-casting completo (4 datas de 2027)', '99,8–99,9% dos pixels iguais'],
+  ['Elevação/azimute da Terra vs. rotina azlcpo do CSPICE', 'diferença < 10⁻⁹°'],
+  ['Horizontes com teto da Terra vs. motor direto (Terra a até 7,5°)', '≥ 98% dos pixels com |Δfração| < 0,05'],
+  ['Janela de ouro: 60% de Sol coincidente vence 80% desencontrado', 'teste automatizado'],
   ['Testes automatizados (Python + TypeScript)', 'pytest + vitest'],
 ]
 
@@ -58,6 +61,31 @@ export function MethodologyView() {
         (método de Mazarico et al., 2011).
       </Section>
 
+      <Section title="Comunicação direta com a Terra (DTE)">
+        <p>
+          A Lua tem rotação sincronizada: a Terra não nasce nem se põe, ela paira quase fixa no céu, perto do meridiano 0°. O que a
+          esconde é a <b>libração</b> — a Lua “balança” ±8° em longitude e ±7° em latitude ao longo do mês. No polo sul, medimos com
+          o SPICE (2026–2035) a Terra variando entre <b>−7,1° e +6,6°</b> de elevação: ela sobe, raspa o horizonte e afunda atrás do
+          relevo. O disco da Terra mede <b>1,8° a 2,05°</b> — quase 4× o Sol — e o sinal de rádio leva <b>1,19 a 1,36 s</b> (correção
+          LT+S, a mesma do Sol).
+        </p>
+        <p className="mt-3">
+          O mapa de horizontes é reaproveitado: para cada instante, compara-se a elevação da Terra com o horizonte na direção dela.
+          Mas o cache precisou ser refeito <b>uma vez</b>: para acelerar o Sol, os horizontes eram cortados em ~1,9° acima da
+          colatitude, e uma montanha de 5° ficaria guardada como ~2° — a Terra a 4° pareceria visível. O novo teto é de 8,5°.
+        </p>
+        <p className="mt-3">
+          Três estados por pixel: <b className="text-sun-300">Sobrevivência</b> (Sol visível), <b className="text-ice-400">Operação</b>
+          (Terra visível) e <b className="text-emerald-300">Zona de Ouro</b> (os dois). Na análise anual, a métrica de portfólio é a
+          <b> maior janela contínua de Zona de Ouro</b>.
+        </p>
+        <p className="mt-3 text-[13px] text-slate-400">
+          Os níveis de enlace por fração do disco (banda larga ≥ 99,9%, degradado ≥ 50%, emergência &gt; 0, LOS = 0) são
+          <b> heurísticos</b>: o enlace real depende de qual estação da DSN está no disco visível e da difração na borda do relevo
+          (ITU-R P.526). Um link budget completo é o próximo passo natural.
+        </p>
+      </Section>
+
       <section>
         <h3 className="mb-3 text-lg font-semibold text-sun-400">Validação</h3>
         <div className="overflow-hidden rounded-xl border border-space-700">
@@ -76,6 +104,8 @@ export function MethodologyView() {
           <li>Área de ±30 km do polo. O ponto mais iluminado da literatura (88,74°S, 124,5°E; Bussey et al., 2010) fica a ~38 km, fora do recorte.</li>
           <li>Um ano não é um ciclo completo (~18,6 anos): “sombra permanente” significa “sem Sol no período analisado”.</li>
           <li>Luz refletida pela Terra e pelo relevo não é considerada.</li>
+          <li>A visibilidade da Terra usa o disco inteiro como alvo; a estação terrestre específica e a difração não são modeladas.</li>
+          <li>Janelas contínuas têm a resolução do passo de tempo da análise anual (12 h).</li>
         </ul>
       </Section>
 

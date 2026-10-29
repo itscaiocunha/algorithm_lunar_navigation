@@ -13,6 +13,14 @@ export interface Overlay {
   image: string
   bounds: Bounds
   opacity?: number
+  smooth?: boolean // filtro linear (hachura); padrão: pixels nítidos (dados de 80 m)
+}
+
+export interface HoverEvent {
+  x_m: number
+  y_m: number
+  screenX: number // px relativos ao canto do mapa
+  screenY: number
 }
 
 export interface MapPoint {
@@ -72,13 +80,14 @@ function niceScale(kmPerPx: number): { km: number; px: number } {
 }
 
 export function MapView2D({
-  overlays, points = [], viewState, onViewStateChange, onClickMap, showGrid = true, caption, children,
+  overlays, points = [], viewState, onViewStateChange, onClickMap, onHoverMap, showGrid = true, caption, children,
 }: {
   overlays: Overlay[]
   points?: MapPoint[]
   viewState: ViewState
   onViewStateChange: (v: ViewState) => void
   onClickMap?: (x_m: number, y_m: number, pointId?: string) => void
+  onHoverMap?: (e: HoverEvent | null) => void
   showGrid?: boolean
   caption?: string
   children?: ReactNode
@@ -91,7 +100,7 @@ export function MapView2D({
       image: o.image,
       bounds: [o.bounds.x_min / 1000, o.bounds.y_min / 1000, o.bounds.x_max / 1000, o.bounds.y_max / 1000],
       opacity: o.opacity ?? 1,
-      textureParameters: { minFilter: 'nearest', magFilter: 'nearest' },
+      textureParameters: o.smooth ? { minFilter: 'linear', magFilter: 'linear' } : { minFilter: 'nearest', magFilter: 'nearest' },
     }))
     const pts = new ScatterplotLayer<MapPoint>({
       id: 'points', data: points, pickable: true, stroked: true, filled: true,
@@ -132,7 +141,11 @@ export function MapView2D({
         onViewStateChange={({ viewState: v }) => onViewStateChange({ target: v.target as ViewState['target'], zoom: v.zoom as number })}
         layers={layers}
         onClick={onClick}
-        onHover={(info) => setHover(info.coordinate ? { x: info.coordinate[0], y: info.coordinate[1] } : null)}
+        onHover={(info) => {
+          const c = info.coordinate
+          setHover(c ? { x: c[0], y: c[1] } : null)
+          onHoverMap?.(c ? { x_m: c[0] * 1000, y_m: c[1] * 1000, screenX: info.x, screenY: info.y } : null)
+        }}
         getCursor={({ isDragging, isHovering }) => (isDragging ? 'grabbing' : isHovering ? 'pointer' : 'crosshair')}
       />
       {caption && (
