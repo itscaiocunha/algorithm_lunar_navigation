@@ -3,3 +3,5 @@ fastapi==0.162.0
 uvicorn[standard]==0.54.0
 spiceypy==8.3.0
 numpy==2.5.4
+rasterio==1.5.2
+matplotlib==3.11.2

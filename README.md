@@ -7,11 +7,17 @@ Projeto algorítmico de navegação lunar em Python, usando **NumPy**,
 
 ```
 alg_lunar_navigator/
-├── src/lunar_navigator/   # código-fonte (api.py = app FastAPI)
-├── tests/                 # testes de cada biblioteca + API
-├── scripts/check_env.py   # verificação rápida do ambiente
-├── kernels/               # kernels SPICE (não versionados)
-├── docs/BIBLIOTECAS.md    # documentação das bibliotecas
+├── src/lunar_navigator/   # código-fonte
+│   ├── api.py             #   app FastAPI
+│   ├── solar.py           #   SPICE: elevação/azimute do Sol num ponto
+│   ├── terrain.py         #   DEM LOLA (GeoTIFF) como matriz NumPy
+│   └── illumination.py    #   ray-casting vetorizado de luz/sombra
+├── tests/                 # testes de cada biblioteca + algoritmos
+├── scripts/               # check_env, elevacao_solar, mapa_iluminacao, ...
+├── kernels/               # kernels SPICE (não versionados, exceto lunar.tm)
+├── data/dem/              # DEMs LOLA (não versionados)
+├── output/                # mapas gerados (não versionados)
+├── docs/                  # BIBLIOTECAS.md, ILUMINACAO.md
 ├── requirements.txt       # dependências de execução
 ├── requirements-dev.txt   # + dependências de teste
 └── pyproject.toml         # metadados e config do pytest
@@ -42,7 +48,15 @@ uvicorn lunar_navigator.api:app --reload --app-dir src
 
 Documentação interativa em <http://127.0.0.1:8000/docs>.
 
+## Mapa de iluminação do polo sul
+
+```powershell
+python scripts/elevacao_solar.py      # elevação do Sol num ponto (esfera lisa)
+python scripts/mapa_iluminacao.py     # luz/sombra com relevo LOLA -> output/
+```
+
 ## Documentação
 
-Veja [docs/BIBLIOTECAS.md](docs/BIBLIOTECAS.md) para a explicação de cada
-biblioteca, conceitos principais e exemplos.
+- [docs/BIBLIOTECAS.md](docs/BIBLIOTECAS.md): cada biblioteca, conceitos e exemplos.
+- [docs/ILUMINACAO.md](docs/ILUMINACAO.md): dados, algoritmo, desempenho e limitações do mapa de iluminação.
+- [docs/REFERENCIAS.md](docs/REFERENCIAS.md): fontes dos dados, artigos científicos e software, com DOIs.

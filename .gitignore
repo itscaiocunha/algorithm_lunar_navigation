@@ -13,6 +13,10 @@ kernels/*
 !kernels/.gitkeep
 !kernels/lunar.tm
 
+# DEMs e saídas geradas (grandes)
+data/
+output/
+
 # IDE / SO
 .vscode/
 .idea/
