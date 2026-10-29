@@ -151,14 +151,17 @@ def api_terrain(step: int = Query(3, ge=1, le=10, description="fator de reduçã
 @app.get("/api/annual")
 def api_annual(
     year: int = 2027,
-    metric: str = Query("golden_window", pattern="^(golden_window|golden_pct|illumination_pct|earth_pct)$",
-                        description="golden_window = maior janela contínua Sol + Terra"),
+    metric: str = Query("score", pattern="^(score|golden_window|golden_pct|illumination_pct|earth_pct)$",
+                        description="score = pontuação composta; golden_window = maior janela contínua Sol + Terra"),
+    a: float = Query(1.0, ge=0, le=10, description="peso A: maior janela de ouro"),
+    b: float = Query(1.0, ge=0, le=10, description="peso B: fração anual de ouro"),
+    c: float = Query(1.0, ge=0, le=10, description="peso C: pior apagão contínuo (noite ou LOS)"),
 ) -> dict:
-    """Mapa anual (Sol, Terra e Zona de Ouro), sombras permanentes e candidatos a pouso."""
+    """Mapa anual (Sol, Terra, Zona de Ouro ou pontuação) e candidatos a pouso re-ranqueados com os pesos A, B, C."""
     data = _annual(year)
     if data is None:
         raise HTTPException(404, f"Análise Sol + Terra de {year} não encontrada: rode scripts/mapa_anual.py --ano {year}")
-    return _call(_service().annual_payload, data, metric)
+    return _call(_service().annual_payload, data, metric, (a, b, c))
 
 
 # Dashboard (precisa vir depois das rotas para não encobri-las)

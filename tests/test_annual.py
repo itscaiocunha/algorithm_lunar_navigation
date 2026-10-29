@@ -73,7 +73,7 @@ def test_landing_candidates_ranked_by_golden_window():
     res.illumination_pct[1, 5] = 99.0  # mais Sol, janela curta
     res.longest_golden_h[1, 5] = 24
     res.longest_golden_h[1, 30] = 240  # menos Sol, janela longa
-    peaks = annual.landing_candidates(res, area, n_peaks=2)
+    peaks = annual.landing_candidates(res, area, n_peaks=2, weights=(1, 0, 0))  # só a janela
     assert (peaks[0]["longest_golden_h"], peaks[1]["longest_golden_h"]) == (240, 24)
 
 
@@ -87,3 +87,43 @@ def test_status_text_and_states():
     assert link.status_text(0.0, 0.0) == "Sem comms (LOS) · Sem energia solar"
     st = link.states(np.array([1.0, 1.0, 0.0, 0.0]), np.array([0.3, 0.0, 1.0, 0.0]))
     assert [k for i in range(4) for k, v in st.items() if v[i]] == ["golden", "power_only", "comms_only", "none"]
+
+
+# --- Pontuação composta ---------------------------------------------------------------
+H = 24.0  # horas por dia
+
+
+def test_score_terms_are_dimensionless_and_sum():
+    month_h = link.SYNODIC_MONTH_D * H
+    score, terms = link.site_score(month_h, 50.0, month_h / 2, 0.0)
+    assert terms["window"] == pytest.approx(1.0)  # uma janela de um mês sinódico vale 1
+    assert terms["golden"] == pytest.approx(0.5)
+    assert terms["outage"] == pytest.approx(-0.5)
+    assert score == pytest.approx(1.0)
+
+
+def test_outage_is_worst_of_night_and_los():
+    s_night, _ = link.site_score(10 * H, 40, 20 * H, 5 * H)
+    s_los, _ = link.site_score(10 * H, 40, 5 * H, 20 * H)
+    assert s_night == pytest.approx(s_los)
+
+
+def test_score_prefers_operational_site_over_longest_window():
+    """Dados reais de 2027: o antigo nº1 (janela 17,5 d, 19,5 d de escuridão) perde para o nº2 (70% de Sol)."""
+    old_1, _ = link.site_score(17.5 * H, 32.5, 19.5 * H, 11.0 * H)
+    old_2, _ = link.site_score(17.0 * H, 44.2, 14.5 * H, 12.0 * H)
+    assert old_2 > old_1
+    assert old_1 == pytest.approx(0.257, abs=1e-3)
+    assert old_2 == pytest.approx(0.527, abs=1e-3)
+
+
+def test_dead_target_with_half_year_los_is_negative():
+    """Janela de ouro longa não salva um local com 6 meses seguidos sem Terra."""
+    dead, _ = link.site_score(17.5 * H, 40.0, 10 * H, 182 * H)
+    modest, _ = link.site_score(10.0 * H, 30.0, 10 * H, 12 * H)
+    assert dead < 0 < modest
+
+
+def test_score_is_vectorized():
+    s, terms = link.site_score(np.array([24.0, 48.0]), np.array([10.0, 20.0]), np.zeros(2), np.zeros(2), (1, 1, 1))
+    assert s.shape == (2,) and s[1] > s[0]

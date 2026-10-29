@@ -107,6 +107,9 @@ export interface PointIllumination {
 
 export interface Peak {
   rank: number
+  score: number
+  score_terms: { window: number; golden: number; outage: number } // já ponderados; somam o score
+  worst_outage_h: number
   lat: number
   lon: number
   x_m: number
@@ -123,13 +126,20 @@ export interface Peak {
   distance_to_psr_km: number
 }
 
-export type AnnualMetric = 'golden_window' | 'golden_pct' | 'illumination_pct' | 'earth_pct'
+export type AnnualMetric = 'score' | 'golden_window' | 'golden_pct' | 'illumination_pct' | 'earth_pct'
+
+export interface Weights {
+  a: number // maior janela de ouro
+  b: number // fração anual de ouro
+  c: number // pior apagão contínuo (noite ou LOS)
+}
 
 export interface Annual {
   year: number
   meta: { n_samples: number; step_hours: number; start_utc: string; end_utc: string; pixel: number }
   bounds: Bounds
-  metric: { id: AnnualMetric; label: string; colormap: 'viridis' | 'inferno' | 'cividis'; unit: string; vmax: number }
+  metric: { id: AnnualMetric; label: string; colormap: 'viridis' | 'inferno' | 'cividis'; unit: string; vmin: number; vmax: number }
+  weights: Weights
   image: string
   peaks: Peak[]
   stats: {
@@ -174,7 +184,7 @@ export const api = {
   map: (utc: string, modo: MapMode) => get<IlluminationMap>('/api/map', { utc, modo }),
   point: (utc: string, lat: number, lon: number, signal?: AbortSignal) =>
     get<PointIllumination>('/api/illumination', { utc, lat, lon }, signal),
-  annual: (year: number, metric: AnnualMetric) => get<Annual>('/api/annual', { year, metric }),
+  annual: (year: number, metric: AnnualMetric, w: Weights) => get<Annual>('/api/annual', { year, metric, ...w }),
 }
 
 export function decodeHeights(t: Terrain): Float32Array {

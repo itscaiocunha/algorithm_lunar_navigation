@@ -150,7 +150,7 @@ def test_basemap(client):
     assert b["shape"] == [750, 750]
 
 
-@pytest.mark.parametrize("metric", ["golden_window", "golden_pct", "illumination_pct", "earth_pct"])
+@pytest.mark.parametrize("metric", ["score", "golden_window", "golden_pct", "illumination_pct", "earth_pct"])
 def test_annual(client, metric):
     r = client.get("/api/annual", params={"year": 2027, "metric": metric})
     if r.status_code == 404:
@@ -159,6 +159,24 @@ def test_annual(client, metric):
     a = r.json()
     assert a["metric"]["id"] == metric
     assert len(a["peaks"]) == 10
-    windows = [p["longest_golden_h"] for p in a["peaks"]]
-    assert windows == sorted(windows, reverse=True)  # ordenados pela janela de ouro
+    scores = [p["score"] for p in a["peaks"]]
+    assert scores == sorted(scores, reverse=True)  # ordenados pela pontuação composta
     assert a["stats"]["psr_km2"] > 0
+
+
+def test_annual_weights_rerank(client):
+    if not config.annual_path(2027).exists():
+        pytest.skip("análise anual ainda não gerada")
+    window_only = client.get("/api/annual", params={"year": 2027, "a": 1, "b": 0, "c": 0}).json()
+    windows = [p["longest_golden_h"] for p in window_only["peaks"]]
+    assert windows == sorted(windows, reverse=True)  # A=1, B=C=0 reproduz o ranking só por janela
+    balanced = client.get("/api/annual", params={"year": 2027}).json()
+    assert balanced["weights"] == {"a": 1.0, "b": 1.0, "c": 1.0}
+    assert balanced["peaks"][0]["score"] > 0
+    t = balanced["peaks"][0]["score_terms"]
+    assert t["window"] + t["golden"] + t["outage"] == pytest.approx(balanced["peaks"][0]["score"], abs=1e-3)
+
+
+def test_annual_rejects_all_zero_weights(client):
+    r = client.get("/api/annual", params={"year": 2027, "a": 0, "b": 0, "c": 0})
+    assert r.status_code in (404, 422)

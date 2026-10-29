@@ -86,6 +86,24 @@ export function MethodologyView() {
         </p>
       </Section>
 
+      <Section title="Pontuação dos locais de pouso">
+        <p>
+          A maior janela contínua de Zona de Ouro, sozinha, satura em ~17 dias (o teto imposto pela libração) e não separa os
+          candidatos. A pontuação composta pondera três grandezas, todas adimensionais — dias divididos pelo mês sinódico
+          (29,53 d) —, para que os pesos expressem importância relativa e não conversão de unidades:
+        </p>
+        <pre className="my-3 rounded-lg bg-space-950 p-3 font-mono text-[13px] text-slate-200">
+{`Score = A·(maior janela de ouro / T) + B·(fração anual de ouro) − C·(pior apagão / T)
+pior apagão = max(maior noite contínua, maior LOS contínuo)`}
+        </pre>
+        <p>
+          O pior apagão é o que limitar primeiro: bateria (sem Sol) ou autonomia sem comando (sem Terra). Com pesos iguais, o local
+          com a maior janela (17,5 d, mas 19,5 d de escuridão) cai para +0,26; o líder passa a ser o pico de 83,8% de Sol com
+          apenas 6 dias de noite (+0,59). Com A = 1 e B = C = 0, a pontuação reproduz exatamente o ranking só por janela. Os pesos
+          podem ser ajustados ao vivo na aba Análise anual (re-ranqueamento de 562 500 pixels em ~0,2 s).
+        </p>
+      </Section>
+
       <section>
         <h3 className="mb-3 text-lg font-semibold text-sun-400">Validação</h3>
         <div className="overflow-hidden rounded-xl border border-space-700">

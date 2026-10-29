@@ -16,9 +16,12 @@ Comunicação direta com a Terra (DTE)
 
 Zona de Ouro (Sol E Terra no mesmo instante)
 - golden_pct: % dos instantes em que as duas condições valem juntas;
-- longest_golden_h: maior janela contínua de Zona de Ouro — a métrica de portfólio:
-  um local com menos Sol, mas cujas janelas de luz coincidem com as de
-  comunicação, é melhor que um com mais Sol e a Terra oculta nos picos de energia.
+- longest_golden_h: maior janela contínua de Zona de Ouro.
+
+Os candidatos a pouso são ordenados pela pontuação composta link.site_score,
+que pondera janela de ouro, fração de ouro e o pior apagão contínuo (noite ou
+LOS): sozinha, a janela de ouro satura em ~17 dias (teto da libração) e não
+separa os candidatos.
 
 A resolução das janelas é o passo de tempo (ex.: 12 h).
 """
@@ -30,7 +33,7 @@ import numpy as np
 import spiceypy as spice
 from scipy import ndimage
 
-from lunar_navigator import ephemeris
+from lunar_navigator import ephemeris, link
 from lunar_navigator.horizon import HorizonMap
 from lunar_navigator.illumination import earth_position_m, sun_position_m
 
@@ -130,16 +133,23 @@ def distance_to_psr_m(result: AnnualResult, area, min_psr_area_km2: float = 0.1)
     return ndimage.distance_transform_edt(~big_psr) * area.pixel
 
 
-def landing_candidates(result: AnnualResult, area, n_peaks: int = 10, min_separation_m: float = 1500.0) -> list[dict]:
-    """Melhores locais (máximos separados), ordenados pela maior janela contínua de Zona de Ouro.
+def scores(result: AnnualResult, weights=link.DEFAULT_WEIGHTS):
+    """Pontuação composta de todos os pixels (ver link.site_score)."""
+    return link.site_score(result.longest_golden_h, result.golden_pct, result.longest_night_h,
+                           result.longest_los_h, weights)
 
-    Desempate: % do tempo em Zona de Ouro, depois % de iluminação.
+
+def landing_candidates(result: AnnualResult, area, n_peaks: int = 10, min_separation_m: float = 1500.0,
+                       weights=link.DEFAULT_WEIGHTS, dist_m: np.ndarray | None = None) -> list[dict]:
+    """Melhores locais (máximos separados ≥ min_separation_m), ordenados pela pontuação composta.
+
+    Desempate (raro com a pontuação contínua): % de iluminação. `dist_m` pode vir de um cache.
     """
-    dist_m = distance_to_psr_m(result, area)
+    dist_m = distance_to_psr_m(result, area) if dist_m is None else dist_m
+    score, terms = scores(result, weights)
     lat, lon = area.lat_lon()
     xs, ys = area.pixel_centers()
-    keys = (result.illumination_pct.ravel(), result.golden_pct.ravel(), result.longest_golden_h.ravel())
-    order = np.lexsort(keys)[::-1]  # última chave é a primária
+    order = np.lexsort((result.illumination_pct.ravel(), score.ravel()))[::-1]  # última chave é a primária
     sep2 = (min_separation_m / area.pixel) ** 2
     chosen: list[tuple[int, int]] = []
     peaks = []
@@ -150,6 +160,8 @@ def landing_candidates(result: AnnualResult, area, n_peaks: int = 10, min_separa
         chosen.append((r, c))
         peaks.append({
             "rank": len(peaks) + 1,
+            "score": round(float(score[r, c]), 4),
+            "score_terms": {k: round(float(v[r, c]), 4) for k, v in terms.items()},
             "lat": round(float(lat[r, c]), 4),
             "lon": round(float(lon[r, c]), 4),
             "x_m": float(xs[r, c]),
@@ -163,8 +175,15 @@ def landing_candidates(result: AnnualResult, area, n_peaks: int = 10, min_separa
             "any_earth_pct": round(float(result.any_earth_pct[r, c]), 1),
             "longest_night_h": float(result.longest_night_h[r, c]),
             "longest_los_h": float(result.longest_los_h[r, c]),
+            "worst_outage_h": float(max(result.longest_night_h[r, c], result.longest_los_h[r, c])),
             "distance_to_psr_km": round(float(dist_m[r, c]) / 1000, 2),
         })
         if len(peaks) == n_peaks:
             break
     return peaks
+
+
+def result_from_arrays(data: dict, meta: dict) -> AnnualResult:
+    """Reconstrói um AnnualResult a partir do .npz salvo (para re-ranquear sem recalcular)."""
+    return AnnualResult(**{k: data[k] for k in AnnualResult.ARRAYS}, n_samples=meta["n_samples"],
+                        step_hours=meta["step_hours"], start_utc=meta["start_utc"], end_utc=meta["end_utc"])

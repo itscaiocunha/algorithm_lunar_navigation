@@ -240,13 +240,42 @@ cache com teto da Terra levou 2038 s, uma única vez (6 processos).
 | Janela de ouro contínua ≥ 7 dias | 1299 km² |
 | Maior janela de ouro | 17,5 dias (88,84°S, 121,6°E; 1524 m) |
 
-**Observação: a métrica satura.** Os dez melhores locais têm janelas de
-16,5 a 17,5 dias. O teto vem da libração: a Terra fica visível só em parte de
-cada ciclo de ~27 dias. Com passo de 12 h, as diferenças entre os candidatos
-são de um ou dois passos, então o desempate por % de Zona de Ouro pesa muito.
-Exemplo: o nº 2 (17,0 d) tem 44% de Zona de Ouro e 70% de Sol, contra 33% e 44%
-do nº 1 (17,5 d). Para separar melhor os candidatos, rode com
-`--passo-horas 2`, ou use uma métrica composta.
+**A janela de ouro sozinha satura.** Os dez melhores por janela ficavam entre
+16,5 e 17,5 dias, porque o teto vem da libração: a Terra só fica visível em parte
+de cada ciclo de ~27 dias. Em vez de refinar o passo de tempo, o que seria força
+bruta para um problema analítico, os candidatos são ordenados por uma
+**pontuação composta** (`link.site_score`):
+
+```
+Score = A·(maior janela de ouro / T) + B·(fração anual de ouro) − C·(pior apagão / T)
+T = 29,53 d (mês sinódico)       pior apagão = max(maior noite, maior LOS)
+```
+
+- **Normalização:** dividir os dias por T deixa os três termos adimensionais (~0..1),
+  então A, B e C expressam importância relativa, e não conversão de unidades.
+- **Penalidade:** o pior apagão é o que limitar primeiro, seja a bateria (sem Sol)
+  ou a autonomia sem comando (sem Terra).
+- **Consistência:** com pesos (1, 0, 0), a pontuação reproduz exatamente o ranking
+  só por janela.
+
+Resultado com pesos (1, 1, 1):
+
+| # | Score | Lat / lon | Janela | Ouro | Sol | Noite | LOS |
+|---|---|---|---|---|---|---|---|
+| 1 | +0,587 | −89,451°, −137,1° | 15,5 d | 48,5% | 83,8% | 6,0 d | 12,5 d |
+| 2 | +0,566 | −89,274°, −113,4° | 16,5 d | 41,4% | 67,2% | 9,5 d | 12,0 d |
+| 3 | +0,561 | −89,299°, 131,3° | 16,5 d | 42,6% | 63,8% | 9,0 d | 12,5 d |
+| antigo nº 1 (só janela) | +0,257 | −88,840°, 121,6° | 17,5 d | 32,5% | 44,1% | 19,5 d | 11,0 d |
+
+O antigo nº 1 não tinha meses de LOS (só 11 d, como os demais). O que o
+derrubou foi a **escuridão de 19,5 d**, que exige uma bateria 35% maior que a do
+antigo nº 2. Ainda assim, 31% da área tem ≥ 182 dias seguidos de LOS, e a
+penalidade torna esses pixels negativos.
+
+**Robustez:** o líder (o mesmo "Pico da Luz Eterna" de 83,8% de Sol da análise só
+com o Sol) fica em 1º com pesos (1,1,1), (1,2,1) e (1,1,2), e em 3º com (2,1,1).
+Os pesos podem ser ajustados ao vivo: `GET /api/annual?a=1&b=1&c=2` re-ranqueia os
+562 500 pixels em ~0,2 s, sem recalcular a física.
 
 Vários dos melhores locais ficam perto de 88,8°S, 120–124°E, a mesma região
 do ponto mais iluminado apontado por Bussey et al. (2010), 88,74°S, 124,5°E.
@@ -264,7 +293,7 @@ uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
 | `GET /api/map?utc=...&modo=completo` | PNG do Sol + frações cruas do Sol e da Terra (uint8 base64) + direções + estatísticas dos 4 estados | ~30 s (2 ray-castings) |
 | `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,5 s |
 | `GET /api/map?utc=...&formato=geotiff` | GeoTIFF de 3 bandas: `sun_fraction`, `earth_fraction`, `golden_zone` | — |
-| `GET /api/annual?year=2027&metric=golden_window` | Mapa anual (`golden_window`, `golden_pct`, `illumination_pct` ou `earth_pct`) + sombras permanentes + candidatos a pouso | ~0,5 s |
+| `GET /api/annual?year=2027&metric=score&a=1&b=1&c=1` | Mapa anual (`score`, `golden_window`, `golden_pct`, `illumination_pct` ou `earth_pct`) + sombras permanentes + candidatos re-ranqueados com os pesos A, B, C | ~0,5–1 s |
 | `GET /api/basemap` | Relevo sombreado da área | ~0,7 s |
 | `GET /api/terrain?step=3` | Altitudes 250×250 (Float32 base64) para a vista 3D | — |
 | `GET /api/info` | DEM, área, caches disponíveis | — |

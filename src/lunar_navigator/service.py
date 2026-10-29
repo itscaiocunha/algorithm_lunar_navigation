@@ -19,6 +19,7 @@ from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
 from spiceypy.utils.exceptions import SpiceyError
 
+from lunar_navigator import annual as annual_mod
 from lunar_navigator import config, ephemeris, horizon, illumination, link, render, terrain
 from lunar_navigator.ephemeris import EARTH, EARTH_RADIUS_M, SUN, SUN_RADIUS_M
 
@@ -27,6 +28,7 @@ _compute_lock = threading.Lock()
 
 ANNUAL_METRICS = {
     # métrica: (rótulo, colormap, unidade, transformação, vmax fixo ou None)
+    "score": ("Pontuação composta do local", "viridis", "", lambda a: a["_score"], None),
     "golden_window": ("Maior janela contínua Sol + Terra", "viridis", "dias", lambda a: a["longest_golden_h"] / 24, None),
     "golden_pct": ("Tempo em Zona de Ouro", "viridis", "%", lambda a: a["golden_pct"], 100.0),
     "illumination_pct": ("Tempo com Sol", "inferno", "%", lambda a: a["illumination_pct"], 100.0),
@@ -275,6 +277,7 @@ class LunarService:
             data["meta"] = json.loads(str(z["meta"]))
             data["peaks"] = json.loads(str(z["peaks"]))
         data["year"] = year
+        data["_result"] = annual_mod.result_from_arrays(data, data["meta"])
         return data
 
     @staticmethod
@@ -292,20 +295,35 @@ class LunarService:
                 "any_earth_pct": round(v("any_earth_pct"), 1), "longest_los_h": v("longest_los_h"),
                 "golden_pct": round(v("golden_pct"), 1), "longest_golden_h": v("longest_golden_h")}
 
-    def annual_payload(self, annual: dict, metric: str = "golden_window") -> dict:
+    def annual_payload(self, annual: dict, metric: str = "score",
+                       weights: tuple[float, float, float] = link.DEFAULT_WEIGHTS) -> dict:
+        """Mapa anual + candidatos re-ranqueados com os pesos dados (~0,2 s, sem recalcular a física)."""
         if metric not in ANNUAL_METRICS:
             raise InputError(f"métrica deve ser uma de {list(ANNUAL_METRICS)}")
+        if any(w < 0 for w in weights) or not any(w > 0 for w in weights):
+            raise InputError("pesos devem ser ≥ 0 e pelo menos um positivo")
+        result = annual["_result"]
+        if "_dist_psr_m" not in annual:  # cache: a distância às sombras não depende dos pesos
+            annual["_dist_psr_m"] = annual_mod.distance_to_psr_m(result, self.area)
+        score, _ = annual_mod.scores(result, weights)
+        peaks = annual_mod.landing_candidates(result, self.area, weights=weights, dist_m=annual["_dist_psr_m"])
         label, cmap, unit, transform, vmax = ANNUAL_METRICS[metric]
-        values = transform(annual)
-        vmax = vmax or float(np.ceil(values.max()))
-        rgb = (0.35 * self.basemap_rgb + 0.65 * render.colorize(values, cmap, 0.0, vmax)).astype(np.uint8)
+        values = transform({**annual, "_score": score})
+        vmin = 0.0
+        if metric == "score":
+            # pode ser negativa; abaixo de −1 (um mês de apagão além dos benefícios) é igualmente
+            # inviável, então a escala vai de max(percentil 5, −1) ao máximo
+            vmin = max(float(np.floor(np.percentile(values[~annual["psr"]], 5) * 10) / 10), -1.0)
+        vmax = vmax or max(float(np.ceil(values.max() * 10) / 10), vmin + 0.1)
+        rgb = (0.35 * self.basemap_rgb + 0.65 * render.colorize(values, cmap, vmin, vmax)).astype(np.uint8)
         rgb = render.overlay_mask(rgb, annual["psr"])
         pix_km2 = (annual["meta"]["pixel"] / 1000) ** 2
         km2 = lambda mask: round(float(mask.sum()) * pix_km2, 2)  # noqa: E731
         return {
             "year": annual["year"], "meta": annual["meta"], "bounds": self.bounds(self.area),
-            "metric": {"id": metric, "label": label, "colormap": cmap, "unit": unit, "vmax": vmax},
-            "image": render.png_data_uri(rgb), "peaks": annual["peaks"],
+            "metric": {"id": metric, "label": label, "colormap": cmap, "unit": unit, "vmin": vmin, "vmax": vmax},
+            "weights": {"a": weights[0], "b": weights[1], "c": weights[2]},
+            "image": render.png_data_uri(rgb), "peaks": peaks,
             "stats": {"psr_km2": km2(annual["psr"]),
                       "earth_never_km2": km2(annual["any_earth_pct"] == 0),
                       "golden_any_km2": km2(annual["golden_pct"] > 0),
