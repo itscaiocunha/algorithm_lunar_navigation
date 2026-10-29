@@ -119,10 +119,24 @@ lunar south pole using high resolution Digital Terrain Models from LOLA.
 | SpiceyPy | 8.3.0 | Annex, A. M., et al. (2020). SpiceyPy: a Pythonic Wrapper for the SPICE Toolkit. *JOSS*, 5(46), 2050. <https://doi.org/10.21105/joss.02050> |
 | NumPy | 2.5.4 | Harris, C. R., et al. (2020). Array programming with NumPy. *Nature*, 585, 357–362. <https://doi.org/10.1038/s41586-020-2649-2> |
 | rasterio | 1.5.2 (GDAL 3.12.2) | <https://rasterio.readthedocs.io> |
+| SciPy | 1.18.1 | Virtanen, P., et al. (2020). SciPy 1.0: fundamental algorithms for scientific computing in Python. *Nature Methods*, 17, 261–272. <https://doi.org/10.1038/s41592-019-0686-2> |
 | Matplotlib | 3.11.2 | <https://matplotlib.org> |
 | FastAPI | 0.162.0 | <https://fastapi.tiangolo.com> |
 | Uvicorn | 0.54.0 | <https://www.uvicorn.org> |
 | pytest | 9.2.0 | <https://docs.pytest.org> |
+
+Frontend (`frontend/package.json`):
+
+| Biblioteca | Versão | Documentação |
+|---|---|---|
+| React | 19.3 | <https://react.dev> |
+| TypeScript | 7.0 | <https://www.typescriptlang.org> |
+| Vite | 8.3 | <https://vite.dev> |
+| deck.gl | 9.4 | <https://deck.gl> |
+| React Three Fiber / drei / three.js | 9.8 / 10.7 / 0.186 | <https://r3f.docs.pmnd.rs> · <https://threejs.org> |
+| Tailwind CSS | 4.3 | <https://tailwindcss.com> |
+| lucide-react | 1.64 | <https://lucide.dev> |
+| vitest | 5.0 | <https://vitest.dev> |
 
 Documentação das rotinas SPICE usadas (todas em
 <https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/>):

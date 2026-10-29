@@ -6,7 +6,7 @@ Uso:  python scripts/check_env.py
 import importlib
 import sys
 
-LIBRARIES = ["numpy", "spiceypy", "fastapi", "uvicorn", "pydantic", "pytest", "httpx"]
+LIBRARIES = ["numpy", "spiceypy", "fastapi", "uvicorn", "pydantic", "rasterio", "scipy", "matplotlib", "pytest", "httpx"]
 
 
 def main() -> int:

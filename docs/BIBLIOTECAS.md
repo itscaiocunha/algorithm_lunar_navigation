@@ -11,6 +11,11 @@ conceitos essenciais para usá-la e como ela é testada.
 | FastAPI | 0.162.0 | API HTTP para expor os algoritmos | `tests/test_fastapi.py` |
 | Uvicorn | 0.54.0 | Servidor ASGI que executa a API | execução manual |
 | pytest / httpx | 9.2.0 / 0.28.1 | Execução dos testes / cliente HTTP do TestClient | — |
+| rasterio | 1.5.2 | Leitura/escrita de GeoTIFF (DEM LOLA, mapas exportados) | `tests/test_illumination.py` |
+| SciPy | 1.18.1 | Regiões de sombra contíguas e distância até elas (`ndimage`) | `tests/test_api_illumination.py` |
+| Matplotlib | 3.11.2 | Colormaps e PNGs dos scripts | saídas em `output/` |
+
+Frontend (`frontend/`, Node.js 20+): veja a [seção 10](#10-frontend--react-typescript-deckgl-react-three-fiber-tailwind).
 
 ---
 
@@ -206,4 +211,58 @@ habilita o `--reload`, que reinicia o servidor ao salvar arquivos).
 pytest                          # todos os testes
 pytest tests/test_spiceypy.py   # só uma biblioteca
 pytest -k rotation              # filtra por nome
+```
+
+---
+
+## 7. rasterio — GeoTIFF
+
+**O que é:** interface Python do GDAL para dados raster georreferenciados.
+
+**Uso no projeto:** `terrain.load_dem` lê o DEM LOLA (`LDEM_80S_80MPP_ADJ.TIF`)
+como matriz NumPy, junto com a projeção (CRS) e a transformação pixel → metros;
+os scripts e a API gravam os mapas calculados como GeoTIFF, que abrem no QGIS.
+
+```python
+import rasterio
+with rasterio.open("data/dem/LDEM_80S_80MPP_ADJ.TIF") as src:
+    alturas = src.read(1)          # matriz NumPy (m)
+    print(src.crs, src.transform)  # polar estereográfica, 80 m/pixel
+```
+
+**Teste:** a projeção do código é conferida contra o PROJ (via rasterio).
+
+## 8. SciPy — análise espacial
+
+**Uso no projeto:** em `annual.py`, `ndimage.label` agrupa pixels de sombra
+permanente em regiões contíguas e `ndimage.distance_transform_edt` mede a
+distância de cada pixel até a sombra mais próxima (coluna "Até a sombra" dos
+Picos da Luz Eterna).
+
+## 9. Matplotlib — colormaps e figuras
+
+**Uso no projeto:** fornece a escala de cores *inferno* usada nos mapas
+(`render.py`) e gera os PNGs dos scripts (`mapa_iluminacao.py`, `mapa_anual.py`).
+
+---
+
+## 10. Frontend — React, TypeScript, deck.gl, React Three Fiber, Tailwind
+
+Fica em `frontend/` e é compilado para `frontend/dist`, que o FastAPI serve em `/`.
+Detalhes e comandos em [frontend/README.md](../frontend/README.md).
+
+| Biblioteca | Papel |
+|---|---|
+| React 19 + TypeScript (strict) | Componentes da interface, com tipos que espelham as respostas da API (`src/lib/api.ts`) |
+| Vite | Servidor de desenvolvimento (com proxy para a API) e build |
+| deck.gl | Mapa 2D: camadas raster, grade lat/lon, picos e clique, no plano polar estereográfico (`OrthographicView`) |
+| React Three Fiber + drei (three.js) | Vista 3D do relevo com a iluminação como textura |
+| Tailwind CSS v4 | Estilo e tema (`src/index.css`) |
+| vitest / oxlint | Testes da geometria (`src/lib/geo.test.ts`) e lint |
+
+```powershell
+cd frontend
+npm install
+npm run build      # gera dist/
+npx vitest run     # testes
 ```
