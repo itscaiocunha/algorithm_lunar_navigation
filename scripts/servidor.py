@@ -36,6 +36,10 @@ def main() -> None:
     p.add_argument("--sem-navegador", action="store_true")
     args = p.parse_args()
 
+    if not (ROOT / "frontend" / "dist" / "index.html").exists():
+        print("Frontend não compilado. Rode uma vez:  cd frontend; npm install; npm run build")
+        print("(a API continua disponível em /docs)")
+
     url = f"http://127.0.0.1:{args.porta}/"
     print(f"Lunar Navigator em {url}  (API: {url}docs)  —  Ctrl+C para parar")
     if not args.sem_navegador:

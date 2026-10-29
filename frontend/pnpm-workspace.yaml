@@ -1,0 +1,19 @@
+allowBuilds:
+  '@vaadin/vaadin-usage-statistics': set this to true or false
+minimumReleaseAgeExclude:
+  - '@deck.gl/aggregation-layers@9.4.1'
+  - '@deck.gl/arcgis@9.4.1'
+  - '@deck.gl/carto@9.4.1'
+  - '@deck.gl/core@9.4.1'
+  - '@deck.gl/extensions@9.4.1'
+  - '@deck.gl/geo-layers@9.4.1'
+  - '@deck.gl/google-maps@9.4.1'
+  - '@deck.gl/json@9.4.1'
+  - '@deck.gl/layers@9.4.1'
+  - '@deck.gl/mapbox@9.4.1'
+  - '@deck.gl/maplibre@9.4.1'
+  - '@deck.gl/mesh-layers@9.4.1'
+  - '@deck.gl/react@9.4.1'
+  - '@deck.gl/widgets@9.4.1'
+  - deck.gl@9.4.1
+  - lucide-react@1.64.0

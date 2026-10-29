@@ -3,16 +3,17 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from lunar_navigator.api import app
+from lunar_navigator.api import WEB_DIR, app
 
 client = TestClient(app)
 
 
+@pytest.mark.skipif(not WEB_DIR.exists(), reason="frontend não compilado (cd frontend && npm run build)")
 def test_root_serves_dashboard():
     response = client.get("/")
     assert response.status_code == 200
     assert "Lunar Navigator" in response.text
-    assert client.get("/app.js").status_code == 200
+    assert client.get("/favicon.svg").status_code == 200
 
 
 def test_health():

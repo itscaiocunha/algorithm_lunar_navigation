@@ -1,6 +1,7 @@
-"""API FastAPI do Lunar Navigator + dashboard web (servido em /).
+"""API FastAPI do Lunar Navigator + dashboard web (build do frontend servido em /).
 
-Executar:  uvicorn lunar_navigator.api:app --app-dir src
+Executar:  python scripts/servidor.py   (ou uvicorn lunar_navigator.api:app --app-dir src)
+Frontend:  cd frontend && npm run build   (gera frontend/dist, servido aqui)
 """
 
 import sys
@@ -16,7 +17,7 @@ from pydantic import BaseModel
 
 from lunar_navigator import __version__, config
 
-WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+WEB_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 state: dict = {}
 
@@ -139,6 +140,12 @@ def api_map(
 def api_basemap() -> dict:
     """Relevo sombreado (hillshade) da área de análise, para fundo do mapa."""
     return _service().basemap_payload()
+
+
+@app.get("/api/terrain")
+def api_terrain(step: int = Query(3, ge=1, le=10, description="fator de redução da malha")) -> dict:
+    """Altitudes da área (Float32 base64) para a vista 3D do relevo."""
+    return _service().terrain_payload(step)
 
 
 @app.get("/api/annual")

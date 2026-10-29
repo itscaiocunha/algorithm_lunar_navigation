@@ -16,7 +16,7 @@ alg_lunar_navigator/
 │   ├── annual.py          #   estatísticas anuais e Picos da Luz Eterna
 │   ├── service.py         #   estado da API (kernels, DEM, caches, locks)
 │   └── render.py          #   matrizes NumPy -> PNG/base64
-├── web/                   # dashboard (HTML/CSS/JS puros, servido em /)
+├── frontend/              # dashboard React + TypeScript (deck.gl, React Three Fiber, Tailwind)
 ├── tests/                 # testes de cada biblioteca + algoritmos
 ├── scripts/               # check_env, elevacao_solar, mapa_iluminacao, ...
 ├── kernels/               # kernels SPICE (não versionados, exceto lunar.tm)
@@ -63,14 +63,20 @@ python scripts/mapa_anual.py          # % do tempo iluminado em 2027 + Picos da 
 
 ## Dashboard web
 
+Requer Node.js 20+ para compilar o frontend (uma vez, e a cada mudança nele):
+
 ```powershell
+cd frontend; npm install; npm run build; cd ..
 python scripts\servidor.py     # sobe a API e abre http://127.0.0.1:8000 no navegador
 ```
 
-Abra sempre pelo endereço `http://127.0.0.1:8000/`. Abrir `web/index.html` direto do
-disco (`file://`) não funciona, porque os cálculos rodam no servidor.
+- **Iluminação num instante:** mapa 2D (deck.gl), comparação lado a lado e relevo 3D
+  (React Three Fiber); clique em qualquer ponto para traçar o raio até o Sol.
+- **Análise anual:** % do tempo iluminado, sombras permanentes e Picos da Luz Eterna.
+- **Metodologia:** pipeline, validação e limitações.
 
 O modo rápido e a aba anual exigem rodar `scripts/mapa_anual.py` uma vez (gera os caches).
+Para desenvolver o frontend com recarga automática, veja [frontend/README.md](frontend/README.md).
 
 ## Documentação
 

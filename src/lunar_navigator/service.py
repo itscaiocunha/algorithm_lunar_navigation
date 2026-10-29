@@ -5,6 +5,7 @@ síncronos em um pool de threads. Toda chamada SPICE passa por `_spice_lock`;
 os cálculos pesados de malha passam por `_compute_lock` (um por vez).
 """
 
+import base64
 import json
 import threading
 import time
@@ -147,14 +148,38 @@ class LunarService:
             self._map_cache.popitem(last=False)
         return result
 
+    def sun_in_map(self, et: float) -> dict:
+        """Direção do Sol vista do centro da área, no plano do mapa (x, y) + elevação.
+
+        Perto do polo, o eixo X do mapa é +Y do MOON_ME e o eixo Y é +X do MOON_ME.
+        """
+        center = self.area.to_unit_vectors(np.array(0.0), np.array(0.0)) * self.area.radius
+        s = self.sun_m(et) - center
+        s /= np.linalg.norm(s)
+        up = center / np.linalg.norm(center)
+        horiz = s - (s @ up) * up
+        dx, dy = float(horiz[1]), float(horiz[0])
+        norm = np.hypot(dx, dy)
+        return {"map_dir": [dx / norm, dy / norm], "elevation_deg": round(float(np.degrees(np.arcsin(s @ up))), 3)}
+
+    def terrain_payload(self, step: int = 3) -> dict:
+        """Malha de altitudes (m) reduzida para a vista 3D, em Float32 little-endian base64."""
+        h = self.area.heights
+        rows, cols = h.shape
+        h = h[: rows - rows % step, : cols - cols % step]
+        small = h.reshape(rows // step, step, cols // step, step).mean(axis=(1, 3)).astype("<f4")
+        return {"shape": list(small.shape), "bounds": self.bounds(self.area),
+                "min_m": round(float(small.min()), 1), "max_m": round(float(small.max()), 1),
+                "heights_b64": base64.b64encode(small.tobytes()).decode("ascii")}
+
     def map_payload(self, utc: str, mode: str, half_size_m: float) -> dict:
         r = self.compute_map(utc, mode, half_size_m)
-        _, iso = self.parse_utc(utc)
+        et, iso = self.parse_utc(utc)
         rgb = render.colorize(r.fraction, "inferno", 0.0, 1.0)
         return {
             "utc": iso, "mode": r.mode, "elapsed_s": round(r.elapsed_s, 2), "steps": r.steps,
             "pixels": int(r.fraction.size), "shape": list(r.fraction.shape), "pixel_m": r.area.pixel,
-            "bounds": self.bounds(r.area), "image": render.png_data_uri(rgb),
+            "bounds": self.bounds(r.area), "image": render.png_data_uri(rgb), "sun": self.sun_in_map(et),
             "stats": {
                 "lit_pct": round(100 * float(np.mean(r.fraction > 0)), 2),
                 "full_disk_pct": round(100 * float(np.mean(r.fraction >= 0.999)), 2),

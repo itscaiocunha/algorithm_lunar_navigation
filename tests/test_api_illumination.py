@@ -62,6 +62,32 @@ def test_map_png_small_area(client):
     assert base64.b64decode(m["image"].split(",", 1)[1])[:8] == b"\x89PNG\r\n\x1a\n"
     assert m["bounds"]["x_max"] - m["bounds"]["x_min"] == pytest.approx(4000)
     assert 0 <= m["stats"]["lit_pct"] <= 100
+    # direção do Sol no plano do mapa: vetor unitário + elevação dentro do limite polar
+    dx, dy = m["sun"]["map_dir"]
+    assert dx**2 + dy**2 == pytest.approx(1.0)
+    assert -2.0 < m["sun"]["elevation_deg"] < 2.0
+
+
+def test_sun_direction_matches_point_azimuth(client):
+    """map_dir no polo deve apontar para o mesmo azimuto que o ray-casting de um ponto vizinho."""
+    m = client.get("/api/map", params={"utc": UTC, "half_size_km": 2}).json()
+    dx, dy = m["sun"]["map_dir"]
+    # num ponto sobre o meridiano 0° (eixo +Y do mapa), o norte local aponta para longe do
+    # polo (+Y) e o leste para +X; logo a direção do Sol no mapa é (sen az, cos az)
+    p = client.get("/api/illumination", params={"utc": UTC, "lat": -89.5, "lon": 0.0}).json()
+    az = np.radians(p["sun_azimuth_deg"])
+    expected = (np.sin(az), np.cos(az))
+    assert dx == pytest.approx(expected[0], abs=0.02)
+    assert dy == pytest.approx(expected[1], abs=0.02)
+
+
+def test_terrain(client):
+    t = client.get("/api/terrain", params={"step": 3}).json()
+    assert t["shape"] == [250, 250]
+    heights = np.frombuffer(base64.b64decode(t["heights_b64"]), dtype="<f4").reshape(t["shape"])
+    assert heights.min() == pytest.approx(t["min_m"], abs=0.1)
+    assert heights.max() == pytest.approx(t["max_m"], abs=0.1)
+    assert -6000 < t["min_m"] < t["max_m"] < 6000
 
 
 def test_map_geotiff(client):

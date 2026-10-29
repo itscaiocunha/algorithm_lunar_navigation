@@ -174,13 +174,14 @@ uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
 
 | Endpoint | Retorno | Tempo medido |
 |---|---|---|
-| `GET /` | Dashboard web (`web/`) | — |
+| `GET /` | Dashboard web (build de `frontend/`) | — |
 | `GET /api/illumination?utc=2026-11-20T00:00:00Z&lat=-89.9&lon=0` | Fração, status, elevação/azimute do Sol, horizonte, altitude e estatística anual do pixel | ~0,15 s |
 | `GET /api/map?utc=...&modo=completo` | PNG base64 + limites + estatísticas | ~10,5 s |
 | `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,3 s |
 | `GET /api/map?utc=...&formato=geotiff` | GeoTIFF para download | — |
 | `GET /api/annual?year=2027` | Mapa de calor anual + sombras permanentes + picos | ~0,8 s |
 | `GET /api/basemap` | Relevo sombreado da área | ~0,7 s |
+| `GET /api/terrain?step=3` | Altitudes 250×250 (Float32 base64) para a vista 3D | — |
 | `GET /api/info` | DEM, área, caches disponíveis | — |
 
 Documentação interativa em `/docs`. O CSPICE não é thread-safe: toda chamada

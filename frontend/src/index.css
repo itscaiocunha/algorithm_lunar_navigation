@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  --color-space-950: #07090e;
+  --color-space-900: #0b0f17;
+  --color-space-850: #10151f;
+  --color-space-800: #151b27;
+  --color-space-700: #1f2736;
+  --color-space-600: #2b3548;
+  --color-sun-300: #ffd68a;
+  --color-sun-400: #f5b04c;
+  --color-sun-500: #ef8a2b;
+  --color-ice-400: #40c8ff;
+  --color-peak-400: #7dff7a;
+
+  --animate-pulse-slow: pulse 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-space-950 text-slate-200 antialiased;
+    background-image:
+      radial-gradient(1200px 600px at 75% -10%, rgb(30 40 64 / 0.55), transparent 60%),
+      radial-gradient(800px 400px at -10% 110%, rgb(239 138 43 / 0.06), transparent 60%);
+  }
+  ::selection { @apply bg-sun-400/30; }
+  input[type="datetime-local"] { color-scheme: dark; }
+}
+
+@utility tabular { font-variant-numeric: tabular-nums; }
+
+/* Gradiente "inferno" (mesma escala do backend: matplotlib inferno) */
+@utility bg-inferno {
+  background-image: linear-gradient(90deg, #000004, #420a68, #932667, #dd513a, #fca50a, #fcffa4);
+}
