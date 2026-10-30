@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { childrenOf, isAncestor, parentOf, screenError, selectTiles, tileBounds, type SelectOptions, type TileMeta } from './quadtree'
+import { curvedPoint } from './curvature'
+import { childrenOf, isAncestor, parentOf, screenError, selectTiles, tileBounds, tileBox, type SelectOptions, type TileMeta } from './quadtree'
 
 // mesma grade do backend: DEM de 608 km, 128 células por tile, nível máximo 6 (células de 74 m)
 const META: TileMeta = {
@@ -64,5 +65,29 @@ describe('quadtree', () => {
 
   it('respeita o teto de tiles', () => {
     expect(selectTiles(META, opts([8, 5, 6], { maxScreenErrorPx: 0.1, maxTiles: 64 })).length).toBeLessThanOrEqual(64)
+  })
+})
+
+describe('caixa com curvatura', () => {
+  it('contém todos os vértices curvados do tile (o culling não pode descartar o que está visível)', () => {
+    for (const k of [{ z: 0, x: 0, y: 0 }, { z: 2, x: 3, y: 0 }, { z: 4, x: 8, y: 8 }, { z: 6, x: 63, y: 31 }]) {
+      const box = tileBox(META, k, 3, 1)
+      const b = tileBounds(META, k)
+      for (const fx of [0, 0.5, 1]) for (const fy of [0, 0.5, 1]) for (const h of [META.height_min_m, 0, META.height_max_m]) {
+        const p = curvedPoint((b.xmin + fx * b.size) / 1000, (b.ymin + fy * b.size) / 1000, h / 1000, 3, 1)
+        for (let i = 0; i < 3; i++) {
+          expect(p[i]).toBeGreaterThanOrEqual(box.min[i] - 1e-9)
+          expect(p[i]).toBeLessThanOrEqual(box.max[i] + 1e-9)
+        }
+      }
+    }
+  })
+
+  it('a caixa plana deixaria de fora a borda curvada (é o bug que a correção evita)', () => {
+    const k = { z: 2, x: 0, y: 0 } // canto do DEM, ~430 km do polo
+    const flat = tileBox(META, k, 3, 0)
+    const b = tileBounds(META, k)
+    const corner = curvedPoint(b.xmin / 1000, b.ymax / 1000, META.height_min_m / 1000, 3, 1)
+    expect(corner[1]).toBeLessThan(flat.min[1])
   })
 })

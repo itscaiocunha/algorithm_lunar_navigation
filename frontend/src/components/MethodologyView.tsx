@@ -126,6 +126,12 @@ pior apagão = max(maior noite contínua, maior LOS contínuo)`}
           de 4 pixels. Longe, poucos tiles grosseiros; perto do alvo, tiles de 74 m. O que sai da vista é expurgado da GPU dentro de um
           orçamento de 128 MB — é o princípio do Google Earth e do Flight Simulator. O painel “Quadtree LOD” mostra os números ao vivo.
         </p>
+        <p>
+          A curvatura é feita na GPU: um vertex shader leva cada vértice do plano polar estereográfico à esfera de 1.737,4 km (a
+          superfície cai 25,7 km a 300 km do polo) e gira as normais para a vertical local. O exagero vertical vale só para o
+          relevo, não para a esfera. Como o three.js descarta e clica contra a geometria plana, o descarte fica com a quadtree
+          (caixas que incluem a curvatura) e o clique usa uma cópia curvada do tile.
+        </p>
       </Section>
 
       <section>

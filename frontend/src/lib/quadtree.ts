@@ -1,4 +1,5 @@
 // Seleção de tiles da quadtree por erro em espaço de tela (LOD), sem dependência de three.js.
+import { curvatureDropKm, MOON_RADIUS_KM } from './curvature'
 //
 // Cena 3D (km): X = x do mapa, Y = altitude × exagero, Z = −y do mapa.
 // Um tile se divide em 4 quando o tamanho da sua célula, projetado na tela a partir da
@@ -70,12 +71,31 @@ export function tileBounds(meta: TileMeta, k: TileKey) {
   return { xmin, xmax: xmin + size, ymin: ymax - size, ymax, size, cell: size / meta.tile_cells }
 }
 
-/** Caixa do tile na cena (km), com a faixa global de altitudes do DEM. */
-export function tileBox(meta: TileMeta, k: TileKey, exaggeration: number): TileBox {
+/**
+ * Caixa do tile na cena (km), com a faixa global de altitudes do DEM.
+ *
+ * Com curvatura, o vertex shader leva o vértice (x, y, h) a r·u na esfera (r = R + h·e). Isso
+ * (1) desce a superfície até ~26 km nas bordas e (2) escala a horizontal por s = 4R·r / (ρ² + 4R²),
+ * encolhendo o tile em direção ao polo. A caixa usa os extremos exatos de s e da queda no tile —
+ * senão o culling da quadtree descartaria tiles que estão na tela.
+ */
+export function tileBox(meta: TileMeta, k: TileKey, exaggeration: number, curvature = 0): TileBox {
   const b = tileBounds(meta, k)
+  const hMin = (meta.height_min_m / 1000) * exaggeration, hMax = (meta.height_max_m / 1000) * exaggeration
+  const xs = [b.xmin / 1000, b.xmax / 1000], ys = [b.ymin / 1000, b.ymax / 1000]
+  if (!curvature) return { min: [xs[0], hMin, -ys[1]], max: [xs[1], hMax, -ys[0]] }
+  const R = MOON_RADIUS_KM
+  const dx = Math.max(xs[0], 0, -xs[1]), dy = Math.max(ys[0], 0, -ys[1])
+  const rhoNear = Math.hypot(dx, dy)
+  const rhoFar = Math.max(...xs.flatMap((x) => ys.map((y) => Math.hypot(x, y))))
+  const sMin = (4 * R * (R + hMin)) / (rhoFar ** 2 + 4 * R * R)
+  const sMax = (4 * R * (R + hMax)) / (rhoNear ** 2 + 4 * R * R)
+  const span = (v: number[]) => { const c = v.flatMap((q) => [q * sMin, q * sMax]); return [Math.min(...c), Math.max(...c)] }
+  const [x0, x1] = span(xs), [y0, y1] = span(ys)
+  const mix = (a: number, c: number) => a + (c - a) * curvature
   return {
-    min: [b.xmin / 1000, (meta.height_min_m / 1000) * exaggeration, -b.ymax / 1000],
-    max: [b.xmax / 1000, (meta.height_max_m / 1000) * exaggeration, -b.ymin / 1000],
+    min: [mix(xs[0], x0), Math.min(hMin, hMin - curvature * curvatureDropKm(rhoFar)), mix(-ys[1], -y1)],
+    max: [mix(xs[1], x1), hMax - curvature * curvatureDropKm(rhoNear), mix(-ys[0], -y0)],
   }
 }
 
@@ -94,6 +114,7 @@ export interface SelectOptions {
   viewportHeightPx: number
   maxScreenErrorPx: number
   exaggeration: number
+  curvature?: number // 0 = plano, 1 = esfera (deve casar com o vertex shader)
   isVisible?: (box: TileBox) => boolean
   maxTiles?: number
 }
@@ -101,7 +122,7 @@ export interface SelectOptions {
 /** Erro (px) de exibir o tile na resolução atual: tamanho da célula projetado na tela. */
 export function screenError(meta: TileMeta, k: TileKey, o: SelectOptions): number {
   const cellKm = tileBounds(meta, k).cell / 1000
-  const d = Math.max(distanceToBox(o.camera, tileBox(meta, k, o.exaggeration)), 1e-3)
+  const d = Math.max(distanceToBox(o.camera, tileBox(meta, k, o.exaggeration, o.curvature)), 1e-3)
   return (cellKm * o.viewportHeightPx) / (2 * d * Math.tan(((o.fovYDeg * Math.PI) / 180) / 2))
 }
 
@@ -112,7 +133,7 @@ export function screenError(meta: TileMeta, k: TileKey, o: SelectOptions): numbe
  */
 export function selectTiles(meta: TileMeta, o: SelectOptions): TileKey[] {
   const maxTiles = o.maxTiles ?? 256
-  const visible = (k: TileKey) => !o.isVisible || o.isVisible(tileBox(meta, k, o.exaggeration))
+  const visible = (k: TileKey) => !o.isVisible || o.isVisible(tileBox(meta, k, o.exaggeration, o.curvature))
   const leaves: { k: TileKey; err: number }[] = []
   const add = (k: TileKey) => { if (visible(k)) leaves.push({ k, err: screenError(meta, k, o) }) }
   add({ z: 0, x: 0, y: 0 })

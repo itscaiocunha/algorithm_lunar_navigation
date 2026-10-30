@@ -5,7 +5,7 @@ React 19 + TypeScript (strict) + Vite + Tailwind CSS v4.
 | Biblioteca | Uso |
 |---|---|
 | **deck.gl** | Mapa analítico 2D: camadas raster (relevo, iluminação, mapa anual), grade lat/lon, picos, picking por clique — tudo no plano polar estereográfico (km), via `OrthographicView` |
-| **React Three Fiber** + drei | Relevo 3D do DEM inteiro com **quadtree LOD** (`QuadtreeTerrain.tsx`): tiles por erro em espaço de tela, frustum culling, saias, expurgo LRU com orçamento de 128 MB e render sob demanda |
+| **React Three Fiber** + drei | Relevo 3D do DEM inteiro com **quadtree LOD** (`QuadtreeTerrain.tsx`): tiles por erro em espaço de tela, frustum culling, saias, expurgo LRU com orçamento de 128 MB e render sob demanda. Curvatura lunar no vertex shader (`onBeforeCompile`), com normais corrigidas e clique contra a superfície curvada |
 | **Tailwind v4** | Design system (tema em `src/index.css`) |
 | lucide-react | Ícones |
 | vitest | Testes da geometria (`src/lib/geo.test.ts`) |
@@ -31,6 +31,7 @@ src/
 │   ├── api.ts              # cliente tipado da API (espelha service.py)
 │   ├── geo.ts              # projeção polar estereográfica (mesmas fórmulas de terrain.py)
 │   ├── quadtree.ts         # seleção de tiles por erro de tela (pura, testada)
+│   ├── curvature.ts        # plano estereográfico → esfera: GLSL injetado + mesma conta na CPU
 │   ├── layers.ts           # hachura da Terra e Zona de Ouro a partir das frações
 │   ├── presets.ts          # catálogo de alvos de missão (com origem e validação)
 │   └── view.ts             # estado de câmera 2D, utilitário cx

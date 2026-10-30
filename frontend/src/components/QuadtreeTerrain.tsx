@@ -1,6 +1,7 @@
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { curvedPoint, injectCurvature, MOON_RADIUS_KM } from '../lib/curvature'
 import {
   fastFraction, isAncestor, parentOf, selectTiles, tileBounds, tileId, type TileKey, type TileMeta,
 } from '../lib/quadtree'
@@ -32,12 +33,59 @@ export interface LodStats {
 
 interface TileData {
   key: TileKey
-  geometry: THREE.BufferGeometry
+  geometry: THREE.BufferGeometry // plana (x, h, −y em km): a GPU aplica exagero e curvatura
   relief: THREE.Texture
   analytic: THREE.Texture | null
   analyticKey: string | null
   bytes: number
   lastUsed: number
+  picking: THREE.BufferGeometry | null // cópia curvada só para o clique (CPU), criada sob demanda
+  pickingKey: string | null
+  // enquanto a camada analítica própria não chega: recorte da textura de um ancestral (clone com
+  // offset/repeat; o three.js compartilha a imagem na GPU entre clones da mesma fonte)
+  fallback: { tex: THREE.Texture; src: THREE.Texture; key: string } | null
+}
+
+const hasAnalytic = (t: TileData | undefined, ak: string) => !!t?.analytic && t.analyticKey === ak
+
+function dropFallback(t: TileData) {
+  t.fallback?.tex.dispose()
+  t.fallback = null
+}
+
+function disposeTile(t: TileData) {
+  t.geometry.dispose(); t.relief.dispose(); t.analytic?.dispose(); t.picking?.dispose(); dropFallback(t)
+}
+
+/**
+ * Raycasting contra a superfície CURVADA. O three.js testa o raio na CPU, mas a curvatura só existe
+ * na GPU: contra a geometria plana, um clique na borda erraria por quilômetros (a superfície desce
+ * até ~26 km). Filtra pela esfera envolvente curvada e só então monta a cópia curvada do tile.
+ */
+function curvedRaycast(this: THREE.Mesh, raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) {
+  const { tile, exaggeration, curvature } = this.userData as { tile: TileData; exaggeration: number; curvature: number }
+  const key = `${exaggeration}|${curvature}`
+  if (tile.pickingKey !== key) {
+    const sphere = tile.geometry.boundingSphere!
+    const c = curvedPoint(sphere.center.x, -sphere.center.z, sphere.center.y, exaggeration, curvature)
+    const bound = new THREE.Sphere(new THREE.Vector3(...c), sphere.radius * Math.max(1, exaggeration) + 2)
+    if (!raycaster.ray.intersectsSphere(bound)) return
+    const src = tile.geometry.attributes.position.array as Float32Array
+    const pos = new Float32Array(src.length)
+    for (let i = 0; i < src.length; i += 3) pos.set(curvedPoint(src[i], -src[i + 2], src[i + 1], exaggeration, curvature), i)
+    tile.picking?.dispose()
+    tile.picking = new THREE.BufferGeometry()
+    tile.picking.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    tile.picking.setAttribute('uv', tile.geometry.attributes.uv)
+    tile.picking.setIndex(tile.geometry.index)
+    tile.picking.computeBoundingSphere()
+    tile.pickingKey = key
+  }
+  const proxy = new THREE.Mesh(tile.picking!, this.material)
+  proxy.matrixWorld.copy(this.matrixWorld)
+  const before = intersects.length
+  THREE.Mesh.prototype.raycast.call(proxy, raycaster, intersects)
+  for (let i = before; i < intersects.length; i++) intersects[i].object = this // o evento é do tile real
 }
 
 const MAX_SCREEN_ERROR_PX = 4
@@ -128,9 +176,10 @@ function setupTexture(t: THREE.Texture): THREE.Texture {
 
 const analyticKeyOf = (a: AnalyticSpec) => `${a.utc}|${+a.sun}${+a.earth}${+a.golden}`
 
-export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onStats, onClickMap }: {
+export function QuadtreeTerrain({ meta, exaggeration, curvature, analytic, debugLevels, onStats, onClickMap }: {
   meta: TileMeta
   exaggeration: number
+  curvature: number // 0 = plano do mapa, 1 = esfera lunar (vertex shader)
   analytic: AnalyticSpec | null
   debugLevels: boolean
   onStats?: (s: LodStats) => void
@@ -138,6 +187,22 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
 }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
+  const invalidate = useThree((s) => s.invalidate)
+  // uniforms compartilhados por TODOS os tiles (mesmo programa de shader): mudar o exagero ou a
+  // curvatura é só trocar um número na GPU — nenhuma geometria é reconstruída
+  // (ref: objeto mutável que pertence à GPU; só é lido na compilação do shader e em efeitos)
+  const uniforms = useRef({
+    uMoonR: { value: MOON_RADIUS_KM }, uExaggeration: { value: exaggeration }, uCurvature: { value: curvature },
+  })
+  const last = useRef({ t: 0, pos: new THREE.Vector3(Infinity, 0, 0), quat: new THREE.Quaternion() })
+  useEffect(() => {
+    uniforms.current.uExaggeration.value = exaggeration
+    uniforms.current.uCurvature.value = curvature
+    last.current.pos.set(Infinity, 0, 0) // força reavaliar a seleção (as caixas mudaram)
+    invalidate()
+  }, [exaggeration, curvature, invalidate])
+  const onBeforeCompile = useCallback(
+    (shader: THREE.WebGLProgramParametersWithUniforms) => injectCurvature(shader, uniforms.current), [])
   const cache = useRef(new Map<string, TileData>())
   const inflight = useRef(new Map<string, AbortController>())
   const analyticInflight = useRef(new Set<string>())
@@ -145,6 +210,10 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
   const selectedRef = useRef<TileKey[]>([{ z: 0, x: 0, y: 0 }])
   const [rendered, setRendered] = useState<TileData[]>([])
   const [version, setVersion] = useState(0) // incrementa quando um tile termina de carregar (libera a fila)
+  const aKey = analytic ? analyticKeyOf(analytic) : null
+  const aKeyRef = useRef(aKey) // lido em callbacks assíncronos, que guardam closures antigas
+  const metaRef = useRef(meta)
+  useEffect(() => { aKeyRef.current = aKey; metaRef.current = meta }, [aKey, meta])
 
   // o que desenhar: a folha se carregada; senão o ancestral carregado mais próximo (o ancestral
   // prevalece sobre descendentes, evitando sobreposição). Chamado só em callbacks, nunca no render.
@@ -157,18 +226,44 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
       }
     }
     const list = [...set.values()]
-    const out = list.filter((t) => !list.some((o) => isAncestor(o.key, t.key)))
+    let out = list.filter((t) => !list.some((o) => isAncestor(o.key, t.key)))
     const now = performance.now()
+    const ak = aKeyRef.current
+    if (ak) {
+      // a câmera girou ou afastou e pediu um tile mais grosso ainda sem análise: se os 4 filhos já
+      // têm a camada, continua desenhando os filhos até o pai chegar (a cor não "pisca")
+      out = out.flatMap((t) => {
+        if (hasAnalytic(t, ak)) return [t]
+        const kids = [0, 1].flatMap((dy) => [0, 1].map((dx) => cache.current.get(tileId({ z: t.key.z + 1, x: 2 * t.key.x + dx, y: 2 * t.key.y + dy }))))
+        return kids.every((c) => hasAnalytic(c, ak)) ? (kids as TileData[]) : [t]
+      })
+      // tile novo, mais fino, sem análise: recorta a textura do ancestral mais próximo que já tem
+      for (const t of out) {
+        if (hasAnalytic(t, ak)) { dropFallback(t); continue }
+        let src: TileData | undefined
+        for (let a = parentOf(t.key); a && !src; a = parentOf(a)) {
+          const c = cache.current.get(tileId(a))
+          if (hasAnalytic(c, ak)) src = c
+        }
+        if (!src) { dropFallback(t); continue }
+        src.lastUsed = now // a fonte do recorte não pode ser expurgada antes do tile
+        if (t.fallback?.src === src.analytic && t.fallback.key === ak) continue
+        dropFallback(t)
+        const bt = tileBounds(metaRef.current, t.key), bs = tileBounds(metaRef.current, src.key)
+        const tex = src.analytic!.clone()
+        tex.repeat.set(bt.size / bs.size, bt.size / bs.size)
+        tex.offset.set((bt.xmin - bs.xmin) / bs.size, (bt.ymin - bs.ymin) / bs.size)
+        t.fallback = { tex, src: src.analytic!, key: ak }
+      }
+    }
     out.forEach((t) => { t.lastUsed = now })
     setRendered(out)
   }
   const tileLoaded = () => { recompute(); setVersion((v) => v + 1) }
-  const last = useRef({ t: 0, pos: new THREE.Vector3(Infinity, 0, 0), quat: new THREE.Quaternion() })
   const pendingFrame = useRef(0)
   const frustum = useMemo(() => new THREE.Frustum(), [])
   const box = useMemo(() => new THREE.Box3(), [])
   const projView = useMemo(() => new THREE.Matrix4(), [])
-  const aKey = analytic ? analyticKeyOf(analytic) : null
 
   // 1. seleção por erro de tela + frustum (throttle: 4×/s, só se a câmera mexeu)
   useFrame(({ clock, invalidate }) => {
@@ -189,7 +284,7 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
     frustum.setFromProjectionMatrix(projView)
     const next = selectTiles(meta, {
       camera: [camera.position.x, camera.position.y, camera.position.z], fovYDeg: camera.fov,
-      viewportHeightPx: size.height, maxScreenErrorPx: MAX_SCREEN_ERROR_PX, exaggeration, maxTiles: MAX_SELECTED,
+      viewportHeightPx: size.height, maxScreenErrorPx: MAX_SCREEN_ERROR_PX, exaggeration, curvature, maxTiles: MAX_SELECTED,
       isVisible: (b) => frustum.intersectsBox(box.set(new THREE.Vector3(...b.min), new THREE.Vector3(...b.max))),
     })
     const prev = selectedRef.current
@@ -223,7 +318,7 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
         if (ctrl.signal.aborted) { tex.dispose(); return }
         const geometry = buildGeometry(new Float32Array(buf), meta.tile_cells, b)
         const bytes = gpuBytes(geometry, meta.texture_px)
-        cache.current.set(id, { key: k, geometry, relief: setupTexture(tex), analytic: null, analyticKey: null, bytes, lastUsed: performance.now() })
+        cache.current.set(id, { key: k, geometry, relief: setupTexture(tex), analytic: null, analyticKey: null, bytes, lastUsed: performance.now(), picking: null, pickingKey: null, fallback: null })
       }).catch(() => undefined).finally(() => {
         inflight.current.delete(id)
         tileLoaded()
@@ -237,13 +332,27 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
     for (const t of cache.current.values()) {
       if (t.analyticKey && t.analyticKey !== aKey) { t.analytic?.dispose(); t.analytic = null; t.analyticKey = null }
     }
-    const todo = rendered.filter((t) => t.analyticKey !== aKey && !analyticInflight.current.has(`${tileId(t.key)}|${aKey}`))
+    // tile sem análise e sem ancestral para recortar: pede antes um ancestral 2 níveis acima — um
+    // pedido cobre 16 tiles com uma prévia grosseira, em vez de deixá-los com o relevo cru
+    const want = new Map<string, { t: TileData; preview: boolean }>()
+    for (const t of rendered) {
+      if (t.analyticKey === aKey) continue
+      if (t.fallback?.key !== aKey) {
+        for (let a = parentOf(t.key); a; a = parentOf(a)) {
+          const c = cache.current.get(tileId(a))
+          if (c && a.z <= t.key.z - 2 && c.analyticKey !== aKey) { want.set(tileId(a), { t: c, preview: true }); break }
+        }
+      }
+      if (!want.has(tileId(t.key))) want.set(tileId(t.key), { t, preview: false })
+    }
+    const todo = [...want.entries()].filter(([id]) => !analyticInflight.current.has(`${id}|${aKey}`))
     const center = (t: TileData) => { const b = tileBounds(meta, t.key); return new THREE.Vector3((b.xmin + b.xmax) / 2000, 0, -(b.ymin + b.ymax) / 2000) }
-    // primeiro os tiles na região rápida (horizontes, ~60 ms); depois por distância (ray-casting, ~2 s)
-    const cost = (t: TileData) => (1 - fastFraction(meta, t.key)) * 1e6 + center(t).distanceTo(camera.position)
-    todo.sort((a, b) => cost(a) - cost(b))
+    // prévias primeiro; depois os tiles na região rápida (horizontes, ~60 ms); depois por distância (ray-casting, ~2 s)
+    const cost = ({ t, preview }: { t: TileData; preview: boolean }) =>
+      (preview ? 0 : 1e7) + (1 - fastFraction(meta, t.key)) * 1e6 + center(t).distanceTo(camera.position)
+    const sorted = todo.map(([, w]) => w).sort((a, b) => cost(a) - cost(b)).map((w) => w.t)
     const free = ANALYTIC_CONCURRENCY - analyticInflight.current.size
-    for (const t of todo.slice(0, Math.max(0, free))) {
+    for (const t of sorted.slice(0, Math.max(0, free))) {
       const id = `${tileId(t.key)}|${aKey}`
       analyticInflight.current.add(id)
       const q = new URLSearchParams({ utc: analytic.utc, sun: String(analytic.sun), earth: String(analytic.earth), golden: String(analytic.golden) })
@@ -271,7 +380,7 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
       for (const [id, t] of victims) {
         if (total <= GPU_BUDGET_MB * 2 ** 20) break
         total -= tileBytes(t)
-        t.geometry.dispose(); t.relief.dispose(); t.analytic?.dispose()
+        disposeTile(t)
         cache.current.delete(id)
       }
     }
@@ -293,7 +402,7 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
     const inf = inflight.current
     return () => {
       for (const ctrl of inf.values()) ctrl.abort()
-      for (const t of c.values()) { t.geometry.dispose(); t.relief.dispose(); t.analytic?.dispose() }
+      for (const t of c.values()) disposeTile(t)
       c.clear()
     }
   }, [])
@@ -306,11 +415,16 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
   }
 
   return (
-    <group scale={[1, exaggeration, 1]}>
+    <group>
       {rendered.map((t) => (
-        <mesh key={tileId(t.key)} geometry={t.geometry} onClick={(e) => onClick(e, t.key)}>
-          <meshStandardMaterial map={t.analyticKey === aKey && t.analytic ? t.analytic : t.relief} roughness={1} metalness={0}
+        // frustumCulled=false: a esfera envolvente da CPU é a do tile plano, mas a GPU desce a superfície
+        // até ~26 km; o culling correto já foi feito pela quadtree, com caixas que incluem a curvatura
+        <mesh key={tileId(t.key)} geometry={t.geometry} frustumCulled={false} raycast={curvedRaycast}
+              userData={{ tile: t, exaggeration, curvature }} onClick={(e) => onClick(e, t.key)}>
+          <meshStandardMaterial map={!aKey ? t.relief : t.analyticKey === aKey && t.analytic ? t.analytic
+                                     : t.fallback?.key === aKey ? t.fallback.tex : t.relief} roughness={1} metalness={0}
                                 side={THREE.DoubleSide} transparent alphaTest={0.5}
+                                onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => 'lunar-curvature-v1'}
                                 color={debugLevels ? LEVEL_COLORS[t.key.z % LEVEL_COLORS.length] : '#ffffff'} />
         </mesh>
       ))}

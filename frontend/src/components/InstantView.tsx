@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import { api, ServerUnavailableError, tilesApi } from '../lib/api'
 import type { Basemap, Countdown, IlluminationMap, Info, MapMode, PointIllumination } from '../lib/api'
 import type { TileMeta } from '../lib/quadtree'
+import { curvatureDropKm } from '../lib/curvature'
 import { addHours, fmt, latLonToMap, mapToLatLon, signed, toUtcIso } from '../lib/geo'
 import { CUSTOM_ID, findPreset } from '../lib/presets'
 import { COLORS, decodeUint8, fillLayer, hatchLayer, stateMasks } from '../lib/layers'
@@ -89,6 +90,7 @@ export function InstantView({ info, basemap, onServerDown }: {
   const [tileMeta, setTileMeta] = useState<TileMeta | null>(null)
   const [lodStats, setLodStats] = useState<LodStats | null>(null)
   const [debugLevels, setDebugLevels] = useState(false)
+  const [curvature, setCurvature] = useState(true)
   const utcRef = useRef(utc)
   useEffect(() => { utcRef.current = utc }, [utc])
   const tooltip = useHoverTelemetry(utcRef, onServerDown)
@@ -361,12 +363,13 @@ export function InstantView({ info, basemap, onServerDown }: {
           {view === '3d' && (
             <div className="h-full overflow-hidden rounded-xl border border-space-700">
               {tileMeta ? (
-                <TerrainLOD3D meta={tileMeta} exaggeration={exaggeration} analytic={analyticSpec} sun={map?.sun} earth={map?.earth}
+                <TerrainLOD3D meta={tileMeta} exaggeration={exaggeration} curvature={curvature ? 1 : 0} analytic={analyticSpec} sun={map?.sun} earth={map?.earth}
                               marker={marker3d} focus={focus3d} debugLevels={debugLevels} onStats={setLodStats} onClickMap={clickMap} />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-slate-500">Carregando a quadtree…</div>
               )}
-              {lodStats && tileMeta && <LodHud stats={lodStats} meta={tileMeta} debug={debugLevels} setDebug={setDebugLevels} />}
+              {lodStats && tileMeta && <LodHud stats={lodStats} meta={tileMeta} debug={debugLevels} setDebug={setDebugLevels}
+                                           curvature={curvature} setCurvature={setCurvature} />}
               <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-space-950/80 px-2.5 py-1 text-[11px] text-slate-400">
                 Arraste para girar · role para zoom (do polo inteiro a ~74 m) · botão direito para mover · relevo exagerado {exaggeration}×
               </div>
@@ -429,7 +432,9 @@ function ModeOption({ active, disabled, onClick, icon, title, badge, text }: {
 }
 
 /** Painel de telemetria da quadtree: prova de que a memória fica limitada enquanto o detalhe acompanha a câmera. */
-function LodHud({ stats: s, meta, debug, setDebug }: { stats: LodStats; meta: TileMeta; debug: boolean; setDebug: (v: boolean) => void }) {
+function LodHud({ stats: s, meta, debug, setDebug, curvature, setCurvature }: {
+  stats: LodStats; meta: TileMeta; debug: boolean; setDebug: (v: boolean) => void; curvature: boolean; setCurvature: (v: boolean) => void
+}) {
   const fullGiB = ((meta.size_m / meta.leaf_cell_m) ** 2 * 32) / 2 ** 30 // malha inteira na resolução máxima
   const cell = meta.size_m / 2 ** s.maxZoom / meta.tile_cells
   return (
@@ -445,6 +450,10 @@ function LodHud({ stats: s, meta, debug, setDebug }: { stats: LodStats; meta: Ti
         {s.analyticWanted > 0 && (<><span className="text-slate-500">Sol + Terra por tile</span><span>{s.analyticReady}/{s.analyticWanted}</span></>)}
       </div>
       <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-slate-400">
+        <input type="checkbox" checked={curvature} onChange={(e) => setCurvature(e.target.checked)} className="accent-sun-400" />
+        Curvatura lunar (GPU) · queda de {fmt(curvatureDropKm(300), 1)} km a 300 km
+      </label>
+      <label className="mt-1 flex cursor-pointer items-center gap-2 text-[11px] text-slate-400">
         <input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} className="accent-sun-400" />
         Colorir tiles por nível (debug)
       </label>

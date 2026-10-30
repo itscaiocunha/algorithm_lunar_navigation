@@ -434,11 +434,38 @@ mostrava o Malapert nem aceitaria um DEM mais fino.
 Para comparar, a malha inteira na resolução máxima ocuparia **2,0 GiB** de geometria
 (129 células por tile no nível 6). O heap JS ficou entre 88 e 125 MB.
 
+## Curvatura lunar no vertex shader
+
+Os tiles chegam ao navegador como altitudes sobre o plano polar estereográfico. A GPU
+leva cada vértice à esfera (`frontend/src/lib/curvature.ts`): o `MeshStandardMaterial` é
+modificado com `onBeforeCompile`, e o CPU, a quadtree e a leitura do GeoTIFF continuam iguais.
+
+- **Posição exata, não aproximada.** O vértice (x, y, h) vira `(R + h·e)·u`, com `u`
+  dado pela estereográfica inversa (a mesma de `illumination.py`). A queda resultante é
+  `R·(1 − cos 2·atan(ρ/2R))`: **25,7 km a 300 km do polo**. A aproximação
+  `R − √(R² − d²)` daria 26,1 km e ignoraria que a projeção também encolhe o horizontal
+  em ~0,75% na borda.
+- **Exagero só no relevo.** O exagero vertical saiu da escala do grupo e foi para o
+  shader, aplicado a `h`. Com a escala no grupo, a esfera seria exagerada junto
+  (queda de 77 km com 3×).
+- **Normais** (`<beginnormal_vertex>`): inversa-transposta do exagero, depois rotação
+  (Rodrigues) do "para cima" do plano para a vertical local da esfera.
+- **Frustum culling.** A esfera envolvente que o three.js calcula na CPU é a do tile
+  plano e descartaria tiles visíveis na borda. Por isso os meshes usam
+  `frustumCulled={false}`, e o culling verdadeiro fica com a quadtree, cujas caixas
+  (`tileBox`) incluem a curvatura com limites exatos. Há um teste que exige que a caixa
+  contenha todos os vértices curvados.
+- **Clique.** O raycasting do three.js roda na CPU contra a geometria plana. Na borda,
+  isso erraria por quilômetros. O tile ganha um `raycast` próprio que filtra pela esfera
+  curvada e monta, sob demanda, uma cópia curvada da geometria só para o clique. Medido
+  no navegador, com câmera vertical sobre o Malapert: erro de 99 m no clique, contra 29 m
+  sem curvatura, ou seja, 1–2 pixels.
+- Um único programa de shader é compartilhado por todos os tiles
+  (`customProgramCacheKey`). Os uniforms (`uExaggeration`, `uCurvature`) mudam sem
+  recompilar. O HUD tem um botão para ligar e desligar a curvatura.
+
 ## Limitações
 
-- **Plano polar estereográfico.** O 3D mostra as altitudes sobre o plano da projeção,
-  não sobre a esfera. Em 608 km a curvatura real "cairia" ~26 km nas bordas, mas não é
-  desenhada; o cálculo de iluminação, em `illumination.py`, inclui a curvatura.
 - **Custo fora da área.** A camada analítica fora da área de ±30 km custa ~0,3–2 s por
   tile, e uma vista distante leva dezenas de segundos para completar. Ampliar o cache de
   horizontes resolveria, ao custo de um pré-cálculo maior.
