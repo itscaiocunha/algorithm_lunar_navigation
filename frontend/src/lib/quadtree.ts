@@ -15,6 +15,18 @@ export interface TileMeta {
   leaf_cell_m: number
   height_min_m: number
   height_max_m: number
+  /** região onde a camada analítica é O(1) no servidor (área com cache de horizontes) */
+  fast_bounds?: { x_min: number; x_max: number; y_min: number; y_max: number } | null
+}
+
+/** Fração da área do tile que cai na região analítica rápida (0..1). */
+export function fastFraction(meta: TileMeta, k: TileKey): number {
+  const f = meta.fast_bounds
+  if (!f) return 0
+  const b = tileBounds(meta, k)
+  const w = Math.max(0, Math.min(b.xmax, f.x_max) - Math.max(b.xmin, f.x_min))
+  const h = Math.max(0, Math.min(b.ymax, f.y_max) - Math.max(b.ymin, f.y_min))
+  return (w * h) / (b.size * b.size)
 }
 
 export interface TileKey {

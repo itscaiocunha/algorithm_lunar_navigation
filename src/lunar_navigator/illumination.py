@@ -101,7 +101,23 @@ def compute_illumination(
     `growth` controla o passo: Δt = max(pixel, growth·t) (passos finos perto,
     largos longe, onde o terreno ocupa ângulos menores).
     """
-    points = area.surface_points().reshape(-1, 3)
+    fraction, elev, horizon, steps = march_points(area.surface_points().reshape(-1, 3), terrain, target_m,
+                                                  target_radius_m, growth, max_distance, chunk_size)
+    return IlluminationResult(
+        fraction.reshape(area.shape),
+        np.degrees(elev).reshape(area.shape),
+        np.degrees(horizon).reshape(area.shape),
+        steps,
+    )
+
+
+def march_points(points: np.ndarray, terrain: DEM, target_m: np.ndarray, target_radius_m: float = SUN_RADIUS_M,
+                 growth: float = 0.01, max_distance: float = np.inf, chunk_size: int = 65_536):
+    """Mesmo ray-casting de compute_illumination para pontos arbitrários (N, 3) em metros.
+
+    Retorna (fração, elevação rad, horizonte rad, passos). Útil para calcular só um subconjunto
+    de células (ex.: as que ficam fora da área com cache de horizontes).
+    """
     fraction = np.empty(len(points))
     elev = np.empty(len(points))
     horizon = np.empty(len(points))
@@ -112,9 +128,4 @@ def compute_illumination(
             points[sl], target_m, target_radius_m, terrain, terrain.pixel, growth, max_distance
         )
         steps = max(steps, n)
-    return IlluminationResult(
-        fraction.reshape(area.shape),
-        np.degrees(elev).reshape(area.shape),
-        np.degrees(horizon).reshape(area.shape),
-        steps,
-    )
+    return fraction, elev, horizon, steps

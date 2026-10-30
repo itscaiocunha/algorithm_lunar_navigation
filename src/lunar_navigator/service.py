@@ -175,6 +175,10 @@ class LunarService:
         except ValueError as exc:
             raise InputError(str(exc)) from exc
 
+    def tiles_meta(self) -> dict:
+        """Metadados da quadtree + região onde a camada analítica é O(1) (área com cache de horizontes)."""
+        return {**self.tiles.meta(), "fast_bounds": self.bounds(self.area) if self.hmap is not None else None}
+
     def tile_heights(self, z: int, x: int, y: int) -> bytes:
         return self._tile_call(self.tiles.heights, z, x, y).astype("<f4").tobytes()
 
@@ -196,24 +200,29 @@ class LunarService:
     def tile_analytic(self, z: int, x: int, y: int, utc: str, layers: tuple[bool, bool, bool]) -> bytes:
         """Sol + Terra + Zona de Ouro do tile no instante, com cache.
 
-        Tile inteiro dentro da área com cache de horizontes: amostra o mapa de horizontes (O(1), o mesmo
-        método do mapa 2D). Fora dela: ray-casting direto das células contra o DEM de 80 m.
+        Híbrido por célula: dentro da área com cache de horizontes, amostra o mapa de horizontes
+        (O(1), o mesmo método do mapa 2D); só as células de fora pagam o ray-casting direto.
         """
         et, iso = self.parse_utc(utc)
         sun_m, earth_m = self.body_m(et, SUN), self.body_m(et, EARTH)
         a = self.bounds(self.area)
 
         def fractions(cells: terrain.DEM):
-            inside = (cells.x0 >= a["x_min"] and cells.x0 + cells.shape[1] * cells.pixel <= a["x_max"]
-                      and cells.y0 <= a["y_max"] and cells.y0 - cells.shape[0] * cells.pixel >= a["y_min"])
-            area_fr = self._area_fractions(et, iso) if inside else None
-            if area_fr is not None:
-                xs, ys = cells.pixel_centers()
-                col = np.clip(((xs - self.area.x0) // self.area.pixel).astype(int), 0, self.area.shape[1] - 1)
-                row = np.clip(((self.area.y0 - ys) // self.area.pixel).astype(int), 0, self.area.shape[0] - 1)
-                return area_fr[0][row, col], area_fr[1][row, col]
-            sun = illumination.compute_illumination(cells, self.dem, sun_m, SUN_RADIUS_M).fraction
-            earth = illumination.compute_illumination(cells, self.dem, earth_m, EARTH_RADIUS_M).fraction
+            xs, ys = cells.pixel_centers()
+            inside = (xs >= a["x_min"]) & (xs < a["x_max"]) & (ys > a["y_min"]) & (ys <= a["y_max"])
+            area_fr = self._area_fractions(et, iso) if inside.any() else None
+            if area_fr is None:
+                inside[:] = False
+            sun, earth = np.zeros(cells.shape), np.zeros(cells.shape)
+            if inside.any():
+                col = ((xs[inside] - self.area.x0) // self.area.pixel).astype(int).clip(0, self.area.shape[1] - 1)
+                row = ((self.area.y0 - ys[inside]) // self.area.pixel).astype(int).clip(0, self.area.shape[0] - 1)
+                sun[inside], earth[inside] = area_fr[0][row, col], area_fr[1][row, col]
+            out = ~inside
+            if out.any():
+                pts = cells.surface_points()[out]
+                sun[out] = illumination.march_points(pts, self.dem, sun_m, SUN_RADIUS_M)[0]
+                earth[out] = illumination.march_points(pts, self.dem, earth_m, EARTH_RADIUS_M)[0]
             return sun, earth
 
         return self._tile_call(self.tiles.analytic_png, z, x, y, iso, fractions, layers)

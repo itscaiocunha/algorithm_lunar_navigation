@@ -121,8 +121,8 @@ def api_illumination(
 
 @app.get("/api/tiles/meta")
 def api_tiles_meta() -> dict:
-    """Grade quadtree do DEM: origem, tamanho, células por tile, nível máximo."""
-    return _service().tiles.meta()
+    """Grade quadtree do DEM: origem, tamanho, células por tile, nível máximo e região analítica rápida."""
+    return _service().tiles_meta()
 
 
 _TILE_CACHE = {"Cache-Control": "public, max-age=86400"}  # relevo e alturas não mudam

@@ -352,6 +352,99 @@ encontrada publicada.
 porque o DEM vai até 80°S. O 2D afasta o zoom para mostrar o alvo, e o 3D volta à
 visão geral.
 
+# Relevo 3D com quadtree LOD (`tiles.py`, `QuadtreeTerrain.tsx`)
+
+**Problema.** A malha 3D do DEM inteiro (80°S–90°S, 608 km) não cabe na memória
+do navegador:
+
+| Resolução | Vértices | Geometria | Textura |
+|---|---|---|---|
+| 80 m | 57,8 M | 1,7 GiB | 0,22 GiB |
+| 20 m | 924 M | 27,5 GiB | 3,4 GiB |
+| 10 m | 3,7 G | 110 GiB | 13,8 GiB |
+
+A vista 3D antiga usava só a área de ±30 km (250² vértices, 2 MB), então não
+mostrava o Malapert nem aceitaria um DEM mais fino.
+
+## Servidor: tiles direto do COG
+
+- **Grade.** O DEM inteiro é o tile raiz (z = 0); no nível z há 2^z × 2^z tiles, cada
+  um com 128 × 128 células (129² vértices). O nível máximo é o primeiro com célula ≤
+  ao pixel nativo: z = 6 com células de 74 m para o DEM de 80 m. Um DEM de 10 m
+  chegaria a z = 9 sem mudar o código.
+- **Leitura janelada.** O GeoTIFF do PGDA é um **COG** (blocos internos de 512 px e
+  overviews 2/4/8/16). Cada tile lê só a sua janela, com reamostragem por média, e o
+  GDAL escolhe a overview adequada: **1–20 ms** por tile em qualquer nível, sem
+  carregar o DEM inteiro na RAM.
+- **Armadilha evitada.** A leitura `boundless` do rasterio passa por um VRT que ignora
+  as overviews: o tile raiz levava **2,6 s**. Recortar a janela para dentro do arquivo
+  e preencher a borda com NaN reduziu para **41 ms**.
+- **Endpoints:**
+  - `/api/tiles/meta`;
+  - `/api/tiles/{z}/{x}/{y}/heights` (Float32 binário);
+  - `…/relief.png`;
+  - `…/analytic.png?utc=` (Sol, Terra e Zona de Ouro).
+
+  Alturas e relevo vão com cache HTTP de 1 dia.
+
+## Cliente: seleção por erro em espaço de tela
+
+- **Divisão.** Um tile se divide em 4 quando sua célula, projetada na tela a partir da
+  distância da câmera, passa de **4 px**. Tiles fora do campo de visão (frustum) são
+  descartados (`lib/quadtree.ts`, função pura testada com vitest).
+- **Refinamento guloso pelo maior erro.** Com o teto de 160 tiles, o detalhe vai
+  primeiro para perto da câmera. Uma busca em largura gastava o orçamento refinando a
+  paisagem distante e não chegava ao nível máximo sob a câmera; o teste pegou isso.
+- **Sem buracos.** Enquanto uma folha não chega, desenha-se o ancestral carregado mais
+  próximo; o ancestral prevalece sobre descendentes para não sobrepor geometria.
+- **Saias verticais** (≥ 300 m) nas bordas escondem frestas entre tiles e entre níveis.
+  Leituras vizinhas do COG podem diferir alguns metros na mesma borda (célula de 74 m
+  sobre pixel de 80 m), e as saias cobrem isso. É a técnica do Cesium e do Flight
+  Simulator.
+- **Normais só da superfície.** Se a saia compartilhasse os vértices da borda, a parede
+  vertical entortaria a normal e a borda ficaria escura. Os primeiros testes de tela
+  mostravam linhas entre os tiles por isso.
+- **Expurgo LRU com orçamento de 128 MB de GPU.** Geometria e texturas fora da tela são
+  liberadas com `dispose()`.
+- **Render sob demanda** (`frameloop="demand"`). Com a cena parada, nada é redesenhado.
+  O render contínuo a 60 fps ocupava a CPU inteira no Chrome headless, que renderiza por
+  software, e atrasava o próprio servidor.
+
+## Camada analítica por tile
+
+- **Híbrida por célula.** Dentro da área com cache de horizontes, o tile amostra o mapa
+  de horizontes do instante (calculado uma vez, ~0,4 s), o mesmo método do mapa 2D. Só
+  as células de fora pagam o ray-casting direto.
+- **Ordem de chegada.** O cliente pede primeiro os tiles da região rápida e depois os
+  demais, por distância.
+
+| Tiles analíticos (servidor isolado) | Vazão |
+|---|---|
+| Dentro da área (horizontes) | 58,7 tiles/s (mediana 57 ms) |
+| Fora da área (ray-casting, 64² células nos níveis grosseiros) | 2,0 tiles/s |
+
+## Medido no navegador (HUD "Quadtree LOD")
+
+| Vista | Tiles na tela / em memória | Vértices | Nível mais fino | GPU (estimada) |
+|---|---|---|---|---|
+| Abertura (±30 km) | 63 / 73 | 1,1 M | z6 · 74 m | 82 MB |
+| Polo inteiro (608 km) | 32 / 109 | 0,57 M | z4 · 297 m | 127 MB |
+| Malapert (122 km do polo) | 62 / 118 | 1,1 M | z6 · 74 m | 128 MB |
+
+Para comparar, a malha inteira na resolução máxima ocuparia **2,0 GiB** de geometria
+(129 células por tile no nível 6). O heap JS ficou entre 88 e 125 MB.
+
+## Limitações
+
+- **Plano polar estereográfico.** O 3D mostra as altitudes sobre o plano da projeção,
+  não sobre a esfera. Em 608 km a curvatura real "cairia" ~26 km nas bordas, mas não é
+  desenhada; o cálculo de iluminação, em `illumination.py`, inclui a curvatura.
+- **Custo fora da área.** A camada analítica fora da área de ±30 km custa ~0,3–2 s por
+  tile, e uma vista distante leva dezenas de segundos para completar. Ampliar o cache de
+  horizontes resolveria, ao custo de um pré-cálculo maior.
+- **Aba anual.** Ainda usa a malha da área de ±30 km, porque as estatísticas anuais só
+  existem ali.
+
 # API e dashboard
 
 ```powershell
@@ -369,6 +462,7 @@ uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
 | `GET /api/annual?year=2027&metric=score&a=1&b=1&c=1` | Mapa anual (`score`, `golden_window`, `golden_pct`, `illumination_pct` ou `earth_pct`) + sombras permanentes + candidatos re-ranqueados com os pesos A, B, C | ~0,5–1 s |
 | `GET /api/basemap` | Relevo sombreado da área | ~0,7 s |
 | `GET /api/terrain?step=3` | Altitudes 250×250 (Float32 base64) para a vista 3D | — |
+| `GET /api/tiles/meta` · `/api/tiles/{z}/{x}/{y}/heights` · `…/relief.png` · `…/analytic.png?utc=` | Quadtree LOD do DEM inteiro para o 3D | 1–60 ms (analítico fora da área: ~2 s) |
 | `GET /api/info` | DEM, área, caches disponíveis | — |
 
 Documentação interativa em `/docs`. O CSPICE não é thread-safe: toda chamada

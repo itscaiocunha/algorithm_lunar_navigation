@@ -2,7 +2,7 @@ import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import {
-  isAncestor, parentOf, selectTiles, tileBounds, tileId, type TileKey, type TileMeta,
+  fastFraction, isAncestor, parentOf, selectTiles, tileBounds, tileId, type TileKey, type TileMeta,
 } from '../lib/quadtree'
 
 // Terreno do DEM inteiro com Nível de Detalhe (quadtree):
@@ -164,16 +164,23 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
   }
   const tileLoaded = () => { recompute(); setVersion((v) => v + 1) }
   const last = useRef({ t: 0, pos: new THREE.Vector3(Infinity, 0, 0), quat: new THREE.Quaternion() })
+  const pendingFrame = useRef(0)
   const frustum = useMemo(() => new THREE.Frustum(), [])
   const box = useMemo(() => new THREE.Box3(), [])
   const projView = useMemo(() => new THREE.Matrix4(), [])
   const aKey = analytic ? analyticKeyOf(analytic) : null
 
   // 1. seleção por erro de tela + frustum (throttle: 4×/s, só se a câmera mexeu)
-  useFrame(({ clock }) => {
+  useFrame(({ clock, invalidate }) => {
     const l = last.current
-    if (clock.elapsedTime - l.t < 0.25) return
-    if (l.pos.distanceToSquared(camera.position) < 1e-6 && l.quat.angleTo(camera.quaternion) < 1e-4) return
+    const moved = l.pos.distanceToSquared(camera.position) >= 1e-6 || l.quat.angleTo(camera.quaternion) >= 1e-4
+    if (!moved) return
+    if (clock.elapsedTime - l.t < 0.25) {
+      // render sob demanda: se a câmera parar dentro da janela de 0,25 s não viria outro quadro,
+      // e a seleção ficaria velha — agenda um quadro para reavaliar
+      if (!pendingFrame.current) pendingFrame.current = window.setTimeout(() => { pendingFrame.current = 0; invalidate() }, 260)
+      return
+    }
     l.t = clock.elapsedTime
     l.pos.copy(camera.position)
     l.quat.copy(camera.quaternion)
@@ -232,7 +239,9 @@ export function QuadtreeTerrain({ meta, exaggeration, analytic, debugLevels, onS
     }
     const todo = rendered.filter((t) => t.analyticKey !== aKey && !analyticInflight.current.has(`${tileId(t.key)}|${aKey}`))
     const center = (t: TileData) => { const b = tileBounds(meta, t.key); return new THREE.Vector3((b.xmin + b.xmax) / 2000, 0, -(b.ymin + b.ymax) / 2000) }
-    todo.sort((a, b) => center(a).distanceTo(camera.position) - center(b).distanceTo(camera.position))
+    // primeiro os tiles na região rápida (horizontes, ~60 ms); depois por distância (ray-casting, ~2 s)
+    const cost = (t: TileData) => (1 - fastFraction(meta, t.key)) * 1e6 + center(t).distanceTo(camera.position)
+    todo.sort((a, b) => cost(a) - cost(b))
     const free = ANALYTIC_CONCURRENCY - analyticInflight.current.size
     for (const t of todo.slice(0, Math.max(0, free))) {
       const id = `${tileId(t.key)}|${aKey}`

@@ -118,6 +118,16 @@ pior apagão = max(maior noite contínua, maior LOS contínuo)`}
         </p>
       </Section>
 
+      <Section title="Relevo 3D com quadtree (Nível de Detalhe)">
+        <p>
+          O DEM inteiro (608 km a 80 m) teria 58 milhões de vértices — ~2 GiB de geometria, o bastante para travar a aba; a 10 m
+          seriam 110 GiB. Por isso o relevo 3D é uma quadtree: o servidor fatia o GeoTIFF (um COG com overviews) em tiles de
+          128 × 128 células lidos sob demanda em milissegundos, e o navegador só carrega os tiles cuja célula, projetada na tela, passa
+          de 4 pixels. Longe, poucos tiles grosseiros; perto do alvo, tiles de 74 m. O que sai da vista é expurgado da GPU dentro de um
+          orçamento de 128 MB — é o princípio do Google Earth e do Flight Simulator. O painel “Quadtree LOD” mostra os números ao vivo.
+        </p>
+      </Section>
+
       <section>
         <h3 className="mb-3 text-lg font-semibold text-sun-400">Validação</h3>
         <div className="overflow-hidden rounded-xl border border-space-700">

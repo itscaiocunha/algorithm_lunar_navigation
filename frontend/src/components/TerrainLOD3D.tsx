@@ -26,6 +26,8 @@ function FocusController({ focus, exaggeration }: { focus: LodFocus; exaggeratio
     const target = new THREE.Vector3(focus.x_m / 1000, (focus.h_m / 1000) * exaggeration, -focus.y_m / 1000)
     goal.current = { target, position: target.clone().add(new THREE.Vector3(-6, 12, 16)), frames: 70 }
   }, [focus.key, focus.x_m, focus.y_m, focus.h_m, exaggeration])
+  const invalidate = useThree((s) => s.invalidate)
+  useEffect(() => { invalidate() }, [focus.key, invalidate]) // dispara o primeiro quadro do voo
   useFrame(() => {
     const g = goal.current
     if (!g || !controls) return
@@ -33,6 +35,7 @@ function FocusController({ focus, exaggeration }: { focus: LodFocus; exaggeratio
     camera.position.lerp(g.position, 0.1)
     controls.update()
     if (--g.frames <= 0) goal.current = null
+    else invalidate() // render sob demanda: pede o próximo quadro enquanto o voo dura
   })
   return null
 }
@@ -58,7 +61,8 @@ export function TerrainLOD3D({ meta, exaggeration, analytic, sun, earth, marker,
           <div className="text-[10.5px] text-slate-500">vistos do polo · setas com elevação ampliada (×3) para visualização</div>
         </div>
       )}
-      <Canvas camera={{ position: HOME.position.toArray(), fov: 42, near: 0.05, far: 6000 }} dpr={[1, 2]}>
+      {/* frameloop="demand": só redesenha quando câmera, tiles ou voo mudam — parada, a cena não gasta CPU/GPU */}
+      <Canvas frameloop="demand" camera={{ position: HOME.position.toArray(), fov: 42, near: 0.05, far: 6000 }} dpr={[1, 2]}>
         <color attach="background" args={['#07090e']} />
         <fog attach="fog" args={['#07090e', 900, 2600]} />
         <ambientLight intensity={1.1} />
