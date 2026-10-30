@@ -26,6 +26,17 @@ export function curvedPoint(xKm: number, yKm: number, hKm: number, exaggeration:
   return [0, 1, 2].map((i) => flat[i] + (curved[i] - flat[i]) * curvature) as Vec3
 }
 
+/** "Para cima" local da cena (vertical do lugar) no ponto do mapa — o mesmo `up` de lunarNormal. */
+export function localUp(xKm: number, yKm: number, curvature = 1): Vec3 {
+  const R = MOON_RADIUS_KM
+  const rho2 = xKm * xKm + yKm * yKm
+  const d = rho2 + 4 * R * R
+  const ux = (4 * R * yKm) / d, uy = (4 * R * xKm) / d, uz = (rho2 - 4 * R * R) / d
+  const v: Vec3 = [uy * curvature, 1 + (-uz - 1) * curvature, -ux * curvature]
+  const n = Math.hypot(...v)
+  return [v[0] / n, v[1] / n, v[2] / n]
+}
+
 /** Queda (km) da superfície esférica abaixo do plano tangente, a `rhoKm` do polo no mapa. */
 export function curvatureDropKm(rhoKm: number): number {
   const theta = 2 * Math.atan(rhoKm / (2 * MOON_RADIUS_KM)) // ângulo ao centro (estereográfica)

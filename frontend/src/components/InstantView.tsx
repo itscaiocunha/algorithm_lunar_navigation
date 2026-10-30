@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type
 import { api, ServerUnavailableError, tilesApi } from '../lib/api'
 import type { Basemap, Countdown, IlluminationMap, Info, MapMode, PointIllumination } from '../lib/api'
 import type { TileMeta } from '../lib/quadtree'
+import { useAnimation } from '../hooks/useAnimation'
+import { sampleAngleDeg, sampleLinear } from '../lib/timeline'
 import { curvatureDropKm } from '../lib/curvature'
 import { addHours, fmt, latLonToMap, mapToLatLon, signed, toUtcIso } from '../lib/geo'
 import { CUSTOM_ID, findPreset } from '../lib/presets'
@@ -15,6 +17,7 @@ import { PointCard } from './PointCard'
 import { EngineeringTooltip } from './Telemetry'
 import type { LodStats } from './QuadtreeTerrain'
 import { TerrainLOD3D, type LodFocus } from './TerrainLOD3D'
+import { TimelinePlayer } from './TimelinePlayer'
 import { Card, Kpi, Segmented, SectionLabel } from './ui'
 
 type ViewMode = '2d' | 'compare' | '3d'
@@ -95,6 +98,11 @@ export function InstantView({ info, basemap, onServerDown }: {
   useEffect(() => { utcRef.current = utc }, [utc])
   const tooltip = useHoverTelemetry(utcRef, onServerDown)
   const layers = useAnalyticLayers(map, showGolden)
+  const pointLatLon = useMemo(() => (pointXY ? mapToLatLon(pointXY.x_m, pointXY.y_m) : null), [pointXY])
+  const anim = useAnimation({ startUtc: toUtcIso(utc), point: pointLatLon,
+                              layers: { sun: showSun, earth: showEarth, golden: showGolden } })
+  // o deck.gl recebe os pixels compostos direto (sem PNG): um ImageData que embrulha o buffer do quadro
+  const animImage = useMemo(() => anim.overlay && new ImageData(anim.overlay.rgba, anim.overlay.width, anim.overlay.height), [anim.overlay])
 
   const handleError = useCallback((e: unknown, set: (m: string) => void) => {
     if (e instanceof ServerUnavailableError) onServerDown('O servidor parou de responder (ele foi encerrado?).')
@@ -187,18 +195,35 @@ export function InstantView({ info, basemap, onServerDown }: {
   }, [view, tileMeta, handleError])
 
   const b = map?.bounds ?? basemap.bounds
-  const pointLatLon = pointXY ? mapToLatLon(pointXY.x_m, pointXY.y_m) : null
   const preset = findPreset(presetId)
   const base: Overlay = { id: 'base', image: basemap.image, bounds: basemap.bounds }
   const sunLayer: Overlay[] = map && showSun ? [{ id: 'sun', image: map.image, bounds: b, opacity: sunOpacity }] : []
   const hatchLayer2d: Overlay[] = layers && showEarth ? [{ id: 'hatch', image: layers.hatch, bounds: b, smooth: true }] : []
   const goldenLayer: Overlay[] = layers && showGolden ? [{ id: 'golden', image: layers.golden, bounds: b }] : []
+  const staticLayers = [...sunLayer, ...hatchLayer2d, ...goldenLayer]
+  const animLayer: Overlay[] = animImage ? [{ id: 'anim', image: animImage, bounds: basemap.bounds, opacity: Math.min(1, sunOpacity / 0.8) }] : []
+
+  // Sol e Terra na legenda do 3D durante a animação: série interpolada no relógio da UI (10 Hz)
+  const animSky = anim.series && (() => {
+    const s = anim.series!, src = s.point ?? s.center, t = anim.playback.tS
+    const dir = (k: 'sun' | 'earth') => {
+      const az = (sampleAngleDeg(src[k].map_az_deg, s.step_s, t) * Math.PI) / 180
+      return { map_dir: [Math.sin(az), Math.cos(az)] as [number, number], elevation_deg: sampleLinear(src[k].elevation_deg, s.step_s, t) }
+    }
+    return { sun: dir('sun'), earth: dir('earth') }
+  })()
+  const analyzeInstant = (utcZ: string) => {
+    anim.playback.pause()
+    const local = utcZ.slice(0, 19)
+    setUtc(local)
+    void run(local)
+  }
   const marker = pointXY ? [{ id: 'sel', ...pointXY, color: [125, 255, 122] as [number, number, number], selected: true,
                                label: preset.id !== CUSTOM_ID ? preset.name.replace(/^(Artemis III|CLPS): /, '') : undefined }] : []
   const expected = mode === 'rapido' ? 0.8 : lastFullSeconds
   const geotiffUrl = map && `/api/map?${new URLSearchParams({ utc: map.utc, modo: map.mode, formato: 'geotiff' })}`
 
-  const analyticSpec = map && (showSun || showEarth || showGolden)
+  const analyticSpec = !anim.active && map && (showSun || showEarth || showGolden)
     ? { utc: map.utc, sun: showSun, earth: showEarth, golden: showGolden } : null
   const marker3d = pointXY && point ? { ...pointXY, h_m: point.height_m } : null
 
@@ -245,6 +270,9 @@ export function InstantView({ info, basemap, onServerDown }: {
           </button>
           {error && <p className="mt-2 text-sm text-rose-300">{error}</p>}
         </Card>
+
+        <TimelinePlayer anim={anim} hasPoint={!!pointXY} onAnalyze={analyzeInstant}
+                        disabled={info.horizon_cache ? null : 'A animação usa o mapa de horizontes: rode scripts/mapa_anual.py para gerar o cache.'} />
 
         <Card>
           <SectionLabel>3 · Alvo de missão</SectionLabel>
@@ -336,14 +364,16 @@ export function InstantView({ info, basemap, onServerDown }: {
             </label>
           )}
           <span className="ml-auto text-xs text-slate-500">
-            {map ? `${map.utc.replace('T', ' ').replace('Z', ' UTC')}` : 'Escolha uma data e clique em Calcular'}
+            {anim.active
+              ? `Animação · quadro de ${(anim.frameUtc ?? anim.win!.startUtc).replace('T', ' ').replace(':00Z', ' UTC')}`
+              : map ? `${map.utc.replace('T', ' ').replace('Z', ' UTC')}` : 'Escolha uma data e clique em Calcular'}
           </span>
         </div>
 
         <div className="relative min-h-0 flex-1">
           {view === '2d' && (
-            <MapView2D {...mapProps} overlays={[base, ...sunLayer, ...hatchLayer2d, ...goldenLayer]}
-                       caption={map ? 'Relevo LOLA · Sol · Terra · Zona de Ouro' : 'Relevo LOLA (80 m/pixel)'}>
+            <MapView2D {...mapProps} overlays={[base, ...(anim.active ? animLayer : staticLayers)]}
+                       caption={anim.active ? 'Animação · mapa de horizontes a cada quadro' : map ? 'Relevo LOLA · Sol · Terra · Zona de Ouro' : 'Relevo LOLA (80 m/pixel)'}>
               {tip}
             </MapView2D>
           )}
@@ -363,8 +393,13 @@ export function InstantView({ info, basemap, onServerDown }: {
           {view === '3d' && (
             <div className="h-full overflow-hidden rounded-xl border border-space-700">
               {tileMeta ? (
-                <TerrainLOD3D meta={tileMeta} exaggeration={exaggeration} curvature={curvature ? 1 : 0} analytic={analyticSpec} sun={map?.sun} earth={map?.earth}
-                              marker={marker3d} focus={focus3d} debugLevels={debugLevels} onStats={setLodStats} onClickMap={clickMap} />
+                <TerrainLOD3D meta={tileMeta} exaggeration={exaggeration} curvature={curvature ? 1 : 0} analytic={analyticSpec || null}
+                              sun={animSky?.sun ?? map?.sun} earth={animSky?.earth ?? map?.earth}
+                              marker={marker3d} focus={focus3d} debugLevels={debugLevels} onStats={setLodStats} onClickMap={clickMap}
+                              animation={anim.active ? {
+                                overlay: anim.overlay, bounds: basemap.bounds, series: anim.series, timeline: anim.timeline,
+                                clock: anim.playback.clock, tick: anim.playback.tS, skyFromPoint: !!(marker3d && anim.series?.point),
+                              } : null} />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-slate-500">Carregando a quadtree…</div>
               )}

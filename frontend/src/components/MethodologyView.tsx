@@ -134,6 +134,20 @@ pior apagão = max(maior noite contínua, maior LOS contínuo)`}
         </p>
       </Section>
 
+      <Section title="Animação: buffer de quadros e céu contínuo">
+        <p>
+          O download e a renderização são separados. Um buffer pede os quadros do chão (um mapa de horizontes por passo, 1 byte
+          por pixel) em ordem, dois de cada vez, à frente da reprodução, e guarda cada um no seu lugar da linha do tempo: uma
+          resposta atrasada não troca a ordem. O relógio só consome o buffer; se o próximo quadro não chegou, ele espera na borda
+          (<i>buffering</i>). Cada quadro reescreve a mesma textura na GPU, sem alocar memória nova.
+        </p>
+        <p>
+          O Sol e a Terra andam de forma contínua a partir de uma única série de efemérides, interpolada a 60 fps. Os eventos do
+          ponto (nascer e pôr do Sol, AOS e LOS) vêm da mesma bisseção com ray-casting exato da contagem regressiva. Por isso a
+          Terra some atrás do relevo exatamente na linha vermelha do LOS no scrubber.
+        </p>
+      </Section>
+
       <section>
         <h3 className="mb-3 text-lg font-semibold text-sun-400">Validação</h3>
         <div className="overflow-hidden rounded-xl border border-space-700">

@@ -25,6 +25,7 @@ from lunar_navigator.ephemeris import EARTH, EARTH_RADIUS_M, SUN, SUN_RADIUS_M
 
 _spice_lock = threading.Lock()
 _compute_lock = threading.Lock()
+_cache_lock = threading.Lock()  # só para mutar caches compartilhados entre threads
 
 ANNUAL_METRICS = {
     # métrica: (rótulo, colormap, unidade, transformação, vmax fixo ou None)
@@ -190,12 +191,18 @@ class LunarService:
         if self.hmap is None:
             return None
         cache = self.__dict__.setdefault("_area_fraction_cache", OrderedDict())
-        if iso not in cache:
-            sun_m, earth_m = self.body_m(et, SUN), self.body_m(et, EARTH)
-            cache[iso] = (self.hmap.illumination(sun_m), self.hmap.earth_visibility(earth_m))
+        with _cache_lock:
+            hit = cache.get(iso)
+        if hit is not None:
+            return hit
+        # fora do lock: dois quadros da animação calculam em paralelo (o NumPy solta o GIL)
+        sun_m, earth_m = self.body_m(et, SUN), self.body_m(et, EARTH)
+        value = (self.hmap.illumination(sun_m), self.hmap.earth_visibility(earth_m))
+        with _cache_lock:
+            cache[iso] = value
             while len(cache) > 8:
                 cache.popitem(last=False)
-        return cache[iso]
+        return value
 
     def tile_analytic(self, z: int, x: int, y: int, utc: str, layers: tuple[bool, bool, bool]) -> bytes:
         """Sol + Terra + Zona de Ouro do tile no instante, com cache.
@@ -228,11 +235,8 @@ class LunarService:
         return self._tile_call(self.tiles.analytic_png, z, x, y, iso, fractions, layers)
 
     # --- Contagem regressiva --------------------------------------------------
-    def countdown(self, utc: str, lat: float, lon: float) -> dict:
-        """Tempo até o próximo pôr/nascer do Sol e LOS/AOS da Terra no pixel (varredura 1 h + bisseção)."""
-        t0 = time.perf_counter()
-        et, iso = self.parse_utc(utc)
-        pixel = self.latlon_to_pixel(lat, lon)
+    def _pixel_profile(self, pixel: terrain.DEM) -> countdown.PixelHorizon:
+        """Perfil de horizonte do pixel (~0,2 s), com cache — compartilhado por countdown e efemérides."""
         key = (pixel.x0, pixel.y0)
         profile = self._profile_cache.get(key)
         if profile is None:
@@ -240,18 +244,32 @@ class LunarService:
             self._profile_cache[key] = profile
             while len(self._profile_cache) > 256:
                 self._profile_cache.popitem(last=False)
+        return profile
+
+    def _exact_margins(self, pixel: terrain.DEM):
+        """(et, alvo) -> margens pelo ray-casting exato do pixel (sinal confiável; usado só no refinamento).
+
+        Chama SPICE: use dentro de `_spice_lock`.
+        """
         radii = {SUN: SUN_RADIUS_M, EARTH: EARTH_RADIUS_M}
 
         def exact(et_k: float, target: str) -> tuple[float, float]:
-            """Margens pelo ray-casting exato do pixel (sinal confiável; usado só no refinamento)."""
             res = illumination.compute_illumination(pixel, self.dem, ephemeris.body_position_m(et_k, target), radii[target])
             elev, hor = float(res.elevation_deg.item()), float(res.horizon_deg.item())
             dist = np.linalg.norm(ephemeris.body_position_m(et_k, target) - pixel.surface_points().reshape(3))
             r = float(np.degrees(np.arcsin(radii[target] / dist)))
             return elev - hor + r, elev - hor - r
 
+        return exact
+
+    def countdown(self, utc: str, lat: float, lon: float) -> dict:
+        """Tempo até o próximo pôr/nascer do Sol e LOS/AOS da Terra no pixel (varredura 1 h + bisseção)."""
+        t0 = time.perf_counter()
+        et, iso = self.parse_utc(utc)
+        pixel = self.latlon_to_pixel(lat, lon)
+        profile = self._pixel_profile(pixel)
         with _spice_lock:
-            result = countdown.countdown(et, profile, exact)
+            result = countdown.countdown(et, profile, self._exact_margins(pixel))
         return {"utc": iso, "lat": lat, "lon": lon, "x_m": pixel.x0 + pixel.pixel / 2, "y_m": pixel.y0 - pixel.pixel / 2,
                 **result, "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
@@ -332,6 +350,74 @@ class LunarService:
                 "none_pct": pct(st["none"]),
             },
         }
+
+    def map_frame(self, utc: str) -> tuple[bytes, str, tuple[int, int]]:
+        """Quadro de animação compacto: 1 byte por pixel, Sol no nibble alto e Terra no baixo (0..15).
+
+        Arredonda para CIMA: qualquer fração > 0 vira ≥ 1, então os estados (sombra, só rádio,
+        Zona de Ouro) do quadro são idênticos aos do mapa completo — só a gradação perde precisão.
+        562 KB por quadro, contra ~2 MB do JSON de /api/map. Só as frações (~0,2 s): sem as faixas de
+        elevação de /api/map, que custam outros ~0,1 s e o quadro não usa.
+        """
+        et, iso = self.parse_utc(utc)
+        fr = self._area_fractions(et, iso)
+        if fr is None:
+            raise InputError("a animação exige o cache de horizontes da área (rode scripts/mapa_anual.py)")
+        q = lambda f: np.ceil(np.clip(f, 0, 1) * 15).astype(np.uint8)  # noqa: E731
+        return (q(fr[0]) << 4 | q(fr[1])).tobytes(), iso, fr[0].shape
+
+    def _sky_track(self, origin_m: np.ndarray, s: np.ndarray) -> dict:
+        """Elevação e azimute NO PLANO DO MAPA (graus, horário a partir de +y) de direções unitárias s."""
+        up = origin_m / np.linalg.norm(origin_m)
+        horiz = s - (s @ up)[:, None] * up
+        horiz /= np.linalg.norm(horiz, axis=1, keepdims=True)
+        x0, y0 = self.dem.to_map(origin_m)
+        x1, y1 = self.dem.to_map(origin_m + 1000.0 * horiz)  # 1 km na direção horizontal, levado ao mapa
+        return {"elevation_deg": np.round(np.degrees(np.arcsin(np.clip(s @ up, -1, 1))), 4).tolist(),
+                "map_az_deg": np.round(np.degrees(np.arctan2(x1 - x0, y1 - y0)) % 360, 3).tolist()}
+
+    def ephemeris_series(self, start: str, hours: float, step_min: float,
+                         lat: float | None = None, lon: float | None = None) -> dict:
+        """Série densa de Sol e Terra para animar o céu: vista do centro da área e, se dado, do pixel.
+
+        No pixel inclui o horizonte no azimute do corpo, a margem (elevação − horizonte ± raio) e
+        TODOS os eventos da janela (nascer/pôr, AOS/LOS, degradação) refinados pela mesma bisseção
+        com ray-casting exato do countdown — são as linhas da linha do tempo.
+        """
+        if not 0 < hours <= 45 * 24:
+            raise InputError("hours deve estar entre 0 e 1080 (45 dias)")
+        if not 5 <= step_min <= 720:
+            raise InputError("step_min deve estar entre 5 e 720")
+        et0, iso = self.parse_utc(start)
+        step_s = step_min * 60.0
+        n = int(hours * 3600 // step_s) + 1
+        if n > 5000:
+            raise InputError("série longa demais: aumente step_min")
+        ets = et0 + np.arange(n) * step_s
+        center = self.area.to_unit_vectors(np.array(0.0), np.array(0.0)) * self.area.radius
+        out: dict = {"start_utc": iso, "step_s": step_s, "n": n, "center": {}}
+        with _spice_lock:
+            for name, target in (("sun", SUN), ("earth", EARTH)):
+                s = np.array([ephemeris.body_position_m(et, target) for et in ets]) - center
+                out["center"][name] = self._sky_track(center, s / np.linalg.norm(s, axis=1, keepdims=True))
+        if lat is None or lon is None:
+            return out
+        pixel = self.latlon_to_pixel(lat, lon)
+        ph = self._pixel_profile(pixel)
+        point = {"lat": lat, "lon": lon, "x_m": pixel.x0 + pixel.pixel / 2, "y_m": pixel.y0 - pixel.pixel / 2,
+                 "height_m": round(float(pixel.heights.item()), 1)}
+        exact = self._exact_margins(pixel)
+        with _spice_lock:
+            for name, target in (("sun", SUN), ("earth", EARTH)):
+                t = countdown.track(ets, ph, target)
+                base = t["elev"] - t["horizon"]
+                point[name] = {**self._sky_track(ph.position_m, t["s"]),
+                               "horizon_deg": np.round(t["horizon"], 4).tolist(),
+                               "margin_deg": np.round(base + t["radius"], 4).tolist(),  # > 0: alguma parte visível
+                               "margin_full_deg": np.round(base - t["radius"], 4).tolist(),  # > 0: disco inteiro
+                               "events": countdown.window_events(ets, ph, target, exact)}
+        out["point"] = point
+        return out
 
     def map_geotiff(self, utc: str, mode: str, half_size_m: float) -> bytes:
         r = self.compute_map(utc, mode, half_size_m)

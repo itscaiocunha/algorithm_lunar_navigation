@@ -1,7 +1,10 @@
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
+import type { AnimatedOverlay } from '../hooks/useAnimation'
+import type { Bounds } from '../lib/api'
 import { curvedPoint, injectCurvature, MOON_RADIUS_KM } from '../lib/curvature'
+import { injectOverlay, type OverlayUniforms } from '../lib/overlay'
 import {
   fastFraction, isAncestor, parentOf, selectTiles, tileBounds, tileId, type TileKey, type TileMeta,
 } from '../lib/quadtree'
@@ -176,7 +179,7 @@ function setupTexture(t: THREE.Texture): THREE.Texture {
 
 const analyticKeyOf = (a: AnalyticSpec) => `${a.utc}|${+a.sun}${+a.earth}${+a.golden}`
 
-export function QuadtreeTerrain({ meta, exaggeration, curvature, analytic, debugLevels, onStats, onClickMap }: {
+export function QuadtreeTerrain({ meta, exaggeration, curvature, analytic, debugLevels, onStats, onClickMap, overlay, overlayBounds }: {
   meta: TileMeta
   exaggeration: number
   curvature: number // 0 = plano do mapa, 1 = esfera lunar (vertex shader)
@@ -184,6 +187,8 @@ export function QuadtreeTerrain({ meta, exaggeration, curvature, analytic, debug
   debugLevels: boolean
   onStats?: (s: LodStats) => void
   onClickMap?: (x_m: number, y_m: number) => void
+  overlay?: AnimatedOverlay | null // quadro da animação: UMA textura sobre todos os tiles da área
+  overlayBounds?: Bounds
 }) {
   const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera
   const size = useThree((s) => s.size)
@@ -201,8 +206,45 @@ export function QuadtreeTerrain({ meta, exaggeration, curvature, analytic, debug
     last.current.pos.set(Infinity, 0, 0) // força reavaliar a seleção (as caixas mudaram)
     invalidate()
   }, [exaggeration, curvature, invalidate])
-  const onBeforeCompile = useCallback(
-    (shader: THREE.WebGLProgramParametersWithUniforms) => injectCurvature(shader, uniforms.current), [])
+  // camada animada: começa com uma textura 1×1 (o sampler precisa de algo) e desligada
+  const overlayUniforms = useRef<OverlayUniforms>({
+    uOverlay: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uOverlayBox: { value: [0, 0, 1, 1] }, uOverlayOn: { value: 0 },
+  })
+  const overlayTex = useRef<THREE.DataTexture | null>(null)
+  useEffect(() => {
+    const u = overlayUniforms.current
+    if (!overlay || !overlayBounds) {
+      u.uOverlayOn.value = 0
+      invalidate()
+      return
+    }
+    let tex = overlayTex.current
+    // a textura embrulha o MESMO buffer RGBA que o composeFrame reescreve: só é criada de novo se o
+    // buffer mudar (outra resolução); a cada quadro basta needsUpdate -> texSubImage2D na GPU
+    if (!tex || tex.image.data !== overlay.rgba) {
+      tex?.dispose()
+      tex = new THREE.DataTexture(overlay.rgba, overlay.width, overlay.height, THREE.RGBAFormat)
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.magFilter = THREE.NearestFilter // pixels de 80 m nítidos, como no mapa 2D
+      tex.minFilter = THREE.LinearFilter
+      tex.generateMipmaps = false // mipmaps seriam recalculados a cada quadro
+      overlayTex.current = tex
+      u.uOverlay.value = tex
+    }
+    tex.needsUpdate = true
+    const b = overlayBounds
+    u.uOverlayBox.value = [b.x_min / 1000, b.y_max / 1000, (b.x_max - b.x_min) / 1000, (b.y_max - b.y_min) / 1000]
+    u.uOverlayOn.value = 1
+    invalidate()
+  }, [overlay, overlayBounds, invalidate])
+  useEffect(() => () => {
+    overlayTex.current?.dispose()
+    ;(overlayUniforms.current.uOverlay.value as THREE.Texture).dispose()
+  }, [])
+  const onBeforeCompile = useCallback((shader: THREE.WebGLProgramParametersWithUniforms) => {
+    injectCurvature(shader, uniforms.current)
+    injectOverlay(shader, overlayUniforms.current)
+  }, [])
   const cache = useRef(new Map<string, TileData>())
   const inflight = useRef(new Map<string, AbortController>())
   const analyticInflight = useRef(new Set<string>())
@@ -424,7 +466,7 @@ export function QuadtreeTerrain({ meta, exaggeration, curvature, analytic, debug
           <meshStandardMaterial map={!aKey ? t.relief : t.analyticKey === aKey && t.analytic ? t.analytic
                                      : t.fallback?.key === aKey ? t.fallback.tex : t.relief} roughness={1} metalness={0}
                                 side={THREE.DoubleSide} transparent alphaTest={0.5}
-                                onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => 'lunar-curvature-v1'}
+                                onBeforeCompile={onBeforeCompile} customProgramCacheKey={() => 'lunar-curvature-overlay-v1'}
                                 color={debugLevels ? LEVEL_COLORS[t.key.z % LEVEL_COLORS.length] : '#ffffff'} />
         </mesh>
       ))}

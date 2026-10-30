@@ -83,16 +83,21 @@ def _target_vectors(ets: np.ndarray, observer_km: np.ndarray, target: str) -> np
                      for et in np.atleast_1d(ets)])
 
 
-def margins(ets, ph: PixelHorizon, target: str) -> tuple[np.ndarray, np.ndarray]:
-    """(margem 'algo visível', margem 'disco inteiro') em graus, para cada instante."""
+def track(ets, ph: PixelHorizon, target: str) -> dict[str, np.ndarray]:
+    """Trajetória do alvo no céu do pixel: direção unitária, elevação, azimute, horizonte e raio do disco."""
     v = _target_vectors(ets, ph.position_m / 1000.0, target)
     dist = np.linalg.norm(v, axis=1)
     s = v / dist[:, None]
-    elev = np.degrees(np.arcsin(s @ ph.up))
     az = np.arctan2(s @ ph.east, s @ ph.north)
-    radius = np.degrees(np.arcsin({SUN: SUN_RADIUS_M, EARTH: EARTH_RADIUS_M}[target] / 1000.0 / dist))
-    base = elev - ph.at(az)
-    return base + radius, base - radius
+    return {"s": s, "elev": np.degrees(np.arcsin(s @ ph.up)), "az": az, "horizon": ph.at(az),
+            "radius": np.degrees(np.arcsin({SUN: SUN_RADIUS_M, EARTH: EARTH_RADIUS_M}[target] / 1000.0 / dist))}
+
+
+def margins(ets, ph: PixelHorizon, target: str) -> tuple[np.ndarray, np.ndarray]:
+    """(margem 'algo visível', margem 'disco inteiro') em graus, para cada instante."""
+    t = track(ets, ph, target)
+    base = t["elev"] - t["horizon"]
+    return base + t["radius"], base - t["radius"]
 
 
 MAX_EXPAND_STEPS = 6  # janela de refinamento: até ±6 h em torno da troca vista pelo perfil
@@ -182,6 +187,44 @@ def body_events(et0: float, ph: PixelHorizon, target: str, step_s: float = STEP_
         "searched_days": round(lookahead_s / 86400, 1),
         "uncertainty_min": UNCERTAINTY_MIN[target],
     }
+
+
+EVENT_NAMES = {  # (alvo, limiar) -> (nome ao ficar visível, nome ao ficar oculto)
+    (SUN, 0): ("sunrise", "sunset"),
+    (EARTH, 0): ("aos", "los"),
+    (EARTH, 1): ("full_signal", "degradation"),
+}
+
+
+def window_events(ets: np.ndarray, ph: PixelHorizon, target: str, exact=None) -> list[dict]:
+    """TODAS as trocas de visibilidade na janela `ets`, refinadas como no countdown.
+
+    O countdown só procura o próximo evento; a linha do tempo da animação precisa de todos. Cada troca
+    vista no perfil é isolada e passa pelo mesmo `_find_crossing` (motor exato + bisseção).
+    Limiar 0 = alguma parte do disco visível; 1 = disco inteiro (só para a Terra).
+    """
+    margins_at = margins(ets, ph, target)
+    memo: dict[float, tuple[float, float]] = {}
+
+    def exact_memo(et):
+        if et not in memo:
+            memo[et] = exact(et, target)
+        return memo[et]
+
+    out = []
+    for idx in (0, 1) if target == EARTH else (0,):
+        values = margins_at[idx]
+        fn = lambda et, i=idx: float(margins(np.array([et]), ph, target)[i][0])  # noqa: E731
+        ex = (lambda et, i=idx: exact_memo(et)[i]) if exact else None
+        positive = values > 0
+        start = 0
+        for k in np.flatnonzero(positive[1:] != positive[:-1]):
+            et_ev, confirmed = _find_crossing(ets[start:], values[start:], fn, ex)  # 1ª troca do trecho = k
+            name = EVENT_NAMES[(target, idx)][0 if positive[k + 1] else 1]
+            out.append({"event": name, "seconds": round(float(et_ev - ets[0]), 1),
+                        "utc": spice.et2utc(et_ev, "ISOC", 0) + "Z", "exact": bool(confirmed)})
+            start = int(k) + 1
+    return sorted(out, key=lambda e: e["seconds"])
 
 
 def countdown(et0: float, ph: PixelHorizon, exact=None) -> dict:

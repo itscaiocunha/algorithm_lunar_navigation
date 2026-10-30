@@ -472,6 +472,75 @@ modificado com `onBeforeCompile`, e o CPU, a quadtree e a leitura do GeoTIFF con
 - **Aba anual.** Ainda usa a malha da área de ±30 km, porque as estatísticas anuais só
   existem ali.
 
+# Animação (`TimelinePlayer.tsx`, `useAnimationBuffer`, `GET /api/map/frame`, `GET /api/ephemeris`)
+
+Reprodução contínua de uma janela (7 dias ou um dia lunar de 29,5 dias) no mapa 2D e no
+relevo 3D. O download dos quadros e a renderização são separados.
+
+## Rede: buffer de pré-carregamento (`lib/frameBuffer.ts`)
+
+- **Um quadro por índice da linha do tempo.** Uma resposta fora de ordem cai no seu lugar,
+  então não há condição de corrida do tipo "a última resposta vence".
+- **Fila em ordem a partir do cursor,** com 2 requisições abertas: enquanto um quadro
+  trafega, o servidor já calcula o próximo.
+- **Janela deslizante** de 36 quadros à frente e 12 atrás. O que sai dela é cancelado
+  (`AbortController`) ou liberado. Um dia lunar a 4 h tem 178 quadros, mas só ~50 ficam
+  na memória.
+- **Falhas** são repetidas com espera crescente. Depois de 3 tentativas, o quadro fica
+  marcado como falho.
+- **Quadro compacto** (`/api/map/frame`): 1 byte por pixel, com Sol e Terra em 4 bits cada,
+  arredondados para cima. Qualquer fração > 0 continua > 0, então os estados (sombra, só
+  rádio, Zona de Ouro) são os da física. Ocupa 562 KB, contra ~2 MB do JSON de `/api/map`,
+  e calcula só as frações.
+
+| Quadros (servidor isolado, mapa de horizontes) | Tempo por quadro |
+|---|---|
+| 1 por vez | 284 ms |
+| 2 por vez (o buffer) | 147 ms (6,8 quadros/s) |
+| 3 por vez | 127 ms |
+
+A "1 dia lunar/min" com passo de 4 h, a reprodução consome 2,9 quadros/s. No navegador, a
+semana inteira (43 quadros) tocou sem pausa, sempre em ordem e com no máximo 2 requisições
+abertas. Com passo de 1 h a essa velocidade (11,8 quadros/s), a rede não acompanha e a
+reprodução entra em *buffering*.
+
+## Render: relógio e quadros (`hooks/usePlayback.ts`)
+
+- **Loop de `requestAnimationFrame`.** O relógio avança na velocidade escolhida (1×, 10×,
+  1 h/s, 1 dia lunar/min). Ao cruzar para um quadro que não chegou, ele para na borda e o
+  painel mostra *buffering*; a reprodução continua quando o quadro chega.
+- **O relógio é um `ref`.** O céu 3D o lê a cada quadro do three.js (60 fps), e o React só
+  re-renderiza 10 vezes por segundo, para o texto da UI.
+- **Textura sem vazamento de memória.** O quadro é composto num único buffer RGBA
+  (`lib/frameCompose.ts`, com as mesmas cores e pesos dos tiles analíticos). No 3D, uma
+  única `DataTexture` aponta para esse buffer; a cada quadro basta `needsUpdate`
+  (`texSubImage2D`). O fragment shader dos tiles amostra essa textura pela coordenada do
+  mapa (`lib/overlay.ts`). Nenhum material, textura ou tile é recriado, e nenhuma
+  requisição por tile é feita durante a animação.
+
+## Céu contínuo e eventos (`/api/ephemeris`)
+
+- **Uma requisição por janela.** Elevação e azimute do Sol e da Terra a cada 30 min, vistos
+  do centro da área e do ponto selecionado. O 3D interpola a série a 60 fps. Com um ponto,
+  as setas saem dele, na vertical local da esfera, e a luz da cena acompanha o Sol.
+- **Eventos da janela.** Nascer e pôr do Sol, AOS, LOS e degradação de RF são refinados no
+  servidor pela mesma bisseção com ray-casting exato do countdown (`window_events`). O
+  countdown só procura o próximo evento; a linha do tempo precisa de todos. Custo: 0,3 s
+  para 7 dias e 1,2 s para um dia lunar.
+- **Sincronia.** A linha vermelha do LOS e o momento em que a Terra some no 3D (esfera
+  apagada, visada vermelha) são o mesmo número. Exemplo: em (−89,0107°, 53,13°), a partir
+  de 20/11/2026, AOS em +46,96 h e LOS em +149,05 h (26/11 05:03 UTC). Um teste confere
+  esse LOS contra o `/api/countdown` pedido de dentro da janela (diferença ≤ 30 s).
+
+## Limitações da animação
+
+- **Chão restrito à área.** O chão animado cobre só a área de ±30 km, onde há cache de
+  horizontes; fora dela, os tiles mostram o relevo. O céu e os eventos do ponto valem em
+  qualquer lugar do DEM.
+- **Chão e eventos usam motores diferentes.** O chão é o mapa de horizontes (180
+  azimutes), em blocos de um passo; os eventos são do ray-casting exato. Perto de um
+  evento, o pixel do quadro pode trocar de estado até um passo antes ou depois da linha.
+
 # API e dashboard
 
 ```powershell
@@ -486,6 +555,8 @@ uvicorn lunar_navigator.api:app --app-dir src     # http://127.0.0.1:8000
 | `GET /api/map?utc=...&modo=completo` | PNG do Sol + frações cruas do Sol e da Terra (uint8 base64) + direções + estatísticas dos 4 estados | ~30 s (2 ray-castings) |
 | `GET /api/map?utc=...&modo=rapido` | Idem, via horizontes | ~0,5 s |
 | `GET /api/map?utc=...&formato=geotiff` | GeoTIFF de 3 bandas: `sun_fraction`, `earth_fraction`, `golden_zone` | — |
+| `GET /api/map/frame?utc=...` | Quadro de animação: 1 byte/pixel (Sol no nibble alto, Terra no baixo), cabeçalhos `X-Shape` e `X-Utc` | ~0,2 s (0,15 s com 2 em paralelo) |
+| `GET /api/ephemeris?start=...&hours=168&step_min=30[&lat&lon]` | Série de elevação/azimute do Sol e da Terra; com ponto: horizonte, margens e todos os eventos da janela por bisseção | 0,3 s (7 d) a 1,2 s (dia lunar) |
 | `GET /api/annual?year=2027&metric=score&a=1&b=1&c=1` | Mapa anual (`score`, `golden_window`, `golden_pct`, `illumination_pct` ou `earth_pct`) + sombras permanentes + candidatos re-ranqueados com os pesos A, B, C | ~0,5–1 s |
 | `GET /api/basemap` | Relevo sombreado da área | ~0,7 s |
 | `GET /api/terrain?step=3` | Altitudes 250×250 (Float32 base64) para a vista 3D | — |

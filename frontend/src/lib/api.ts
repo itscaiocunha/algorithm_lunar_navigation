@@ -192,6 +192,34 @@ export interface Terrain {
   heights_b64: string
 }
 
+export interface SkyTrack {
+  elevation_deg: number[]
+  map_az_deg: number[] // azimute no plano do mapa, horário a partir de +y (meridiano 0°)
+}
+
+export interface PointSkyTrack extends SkyTrack {
+  horizon_deg: number[] // horizonte do relevo no azimute do corpo
+  margin_deg: number[] // elevação − horizonte + raio: > 0 = alguma parte do disco visível
+  margin_full_deg: number[] // elevação − horizonte − raio: > 0 = disco inteiro
+  events: CountdownEvent[] // todas as trocas da janela, pela bisseção do countdown (seconds desde start_utc)
+}
+
+export interface EphemerisSeries {
+  start_utc: string
+  step_s: number
+  n: number
+  center: { sun: SkyTrack; earth: SkyTrack }
+  point?: { lat: number; lon: number; x_m: number; y_m: number; height_m: number; sun: PointSkyTrack; earth: PointSkyTrack }
+}
+
+/** Quadro de animação: 1 byte por pixel, Sol no nibble alto e Terra no baixo (0..15). */
+export interface AnimationFrame {
+  utc: string
+  rows: number
+  cols: number
+  bytes: Uint8Array
+}
+
 /** Erro de rede (servidor fora do ar) — distinto de erro de validação da API. */
 export class ServerUnavailableError extends Error {}
 
@@ -219,6 +247,16 @@ export const api = {
   countdown: (utc: string, lat: number, lon: number, signal?: AbortSignal) =>
     get<Countdown>('/api/countdown', { utc, lat, lon }, signal),
   annual: (year: number, metric: AnnualMetric, w: Weights) => get<Annual>('/api/annual', { year, metric, ...w }),
+  ephemeris: (start: string, hours: number, stepMin: number, at?: { lat: number; lon: number }, signal?: AbortSignal) =>
+    get<EphemerisSeries>('/api/ephemeris', { start, hours, step_min: stepMin, ...at }, signal),
+  frame: async (utc: string, signal?: AbortSignal): Promise<AnimationFrame> => {
+    const res = await fetch(`/api/map/frame?${new URLSearchParams({ utc })}`, { signal })
+    if (!res.ok) throw new Error(`quadro ${utc}: HTTP ${res.status}`)
+    const [rows, cols] = (res.headers.get('X-Shape') ?? '0,0').split(',').map(Number)
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (bytes.length !== rows * cols) throw new Error(`quadro ${utc}: tamanho inesperado`)
+    return { utc: res.headers.get('X-Utc') ?? utc, rows, cols, bytes }
+  },
 }
 
 export function decodeHeights(t: Terrain): Float32Array {

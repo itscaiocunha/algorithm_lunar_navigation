@@ -32,11 +32,21 @@ src/
 │   ├── geo.ts              # projeção polar estereográfica (mesmas fórmulas de terrain.py)
 │   ├── quadtree.ts         # seleção de tiles por erro de tela (pura, testada)
 │   ├── curvature.ts        # plano estereográfico → esfera: GLSL injetado + mesma conta na CPU
+│   ├── frameBuffer.ts      # buffer de pré-carregamento da animação (ordem, concorrência, janela deslizante)
+│   ├── frameCompose.ts     # quadro (nibbles Sol/Terra) → RGBA num buffer reaproveitado
+│   ├── overlay.ts          # quadro animado no fragment shader dos tiles (uma textura só)
+│   ├── timeline.ts         # janela, interpolação das efemérides, estados e eventos no ponto
 │   ├── layers.ts           # hachura da Terra e Zona de Ouro a partir das frações
 │   ├── presets.ts          # catálogo de alvos de missão (com origem e validação)
 │   └── view.ts             # estado de câmera 2D, utilitário cx
+├── hooks/
+│   ├── useAnimationBuffer.ts # esteira de download dos quadros (FrameBuffer no ciclo de vida do React)
+│   ├── usePlayback.ts      # relógio (requestAnimationFrame) que só consome o buffer; buffering automático
+│   └── useAnimation.ts     # janela + buffer + relógio + céu + quadro composto
 └── components/
     ├── InstantView.tsx     # iluminação num instante (mapa / comparar / 3D)
+    ├── TimelinePlayer.tsx  # play/pause/stop, velocidade, scrubber com buffer, LOS/AOS e faixas do ponto
+    ├── AnimatedSky.tsx     # Sol, Terra e luz animados a 60 fps (lê o relógio por ref)
     ├── AnnualView.tsx      # Picos da Luz Eterna
     ├── MethodologyView.tsx # como funciona, validação, limitações
     ├── MapView2D.tsx       # deck.gl

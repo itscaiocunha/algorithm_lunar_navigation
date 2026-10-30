@@ -10,7 +10,7 @@ import type { ViewState } from '../lib/view'
 
 export interface Overlay {
   id: string
-  image: string
+  image: string | ImageData // URL/data URI, ou pixels já compostos (quadro da animação)
   bounds: Bounds
   opacity?: number
   smooth?: boolean // filtro linear (hachura); padrão: pixels nítidos (dados de 80 m)

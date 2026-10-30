@@ -179,6 +179,26 @@ def api_map(
     return _call(svc.map_payload, utc, modo, half_size_km * 1000)
 
 
+@app.get("/api/map/frame")
+def api_map_frame(utc: str = Query(..., examples=["2026-11-20T00:00:00Z"])) -> Response:
+    """Quadro de animação (modo rápido): bytes linha a linha, Sol no nibble alto e Terra no baixo (0..15)."""
+    data, iso, (rows, cols) = _call(_service().map_frame, utc)
+    return Response(data, media_type="application/octet-stream",
+                    headers={"X-Utc": iso, "X-Shape": f"{rows},{cols}", "Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/ephemeris")
+def api_ephemeris(
+    start: str = Query(..., examples=["2026-11-20T00:00:00Z"]),
+    hours: float = Query(168, gt=0, le=1080, description="duração da janela"),
+    step_min: float = Query(30, ge=5, le=720, description="passo da série"),
+    lat: float | None = Query(None, ge=-90, le=-80),
+    lon: float | None = Query(None, ge=-360, le=360),
+) -> dict:
+    """Série densa de elevação/azimute do Sol e da Terra (centro da área e, opcionalmente, um pixel com horizonte)."""
+    return _call(_service().ephemeris_series, start, hours, step_min, lat, lon)
+
+
 @app.get("/api/basemap")
 def api_basemap() -> dict:
     """Relevo sombreado (hillshade) da área de análise, para fundo do mapa."""

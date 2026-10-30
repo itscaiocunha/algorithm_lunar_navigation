@@ -1,10 +1,14 @@
 import { Line, OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import * as THREE from 'three'
-import type { BodyDirection } from '../lib/api'
+import type { AnimatedOverlay } from '../hooks/useAnimation'
+import type { PlaybackClock } from '../hooks/usePlayback'
+import type { BodyDirection, Bounds, EphemerisSeries } from '../lib/api'
 import { curvedPoint } from '../lib/curvature'
 import type { TileMeta } from '../lib/quadtree'
+import type { PointTimeline } from '../lib/timeline'
+import { AnimatedSky } from './AnimatedSky'
 import { QuadtreeTerrain, type AnalyticSpec, type LodStats } from './QuadtreeTerrain'
 import { BodyIndicator, BodyLegend } from './Terrain3D'
 
@@ -43,7 +47,18 @@ function FocusController({ focus, exaggeration, curvature }: { focus: LodFocus; 
   return null
 }
 
-export function TerrainLOD3D({ meta, exaggeration, curvature, analytic, sun, earth, marker, focus, debugLevels, onStats, onClickMap }: {
+/** Animação em curso: quadro do chão (textura única) + céu contínuo. */
+export interface LodAnimation {
+  overlay: AnimatedOverlay | null
+  bounds: Bounds // área coberta pelos quadros (±30 km)
+  series: EphemerisSeries | null
+  timeline: PointTimeline | null
+  clock: RefObject<PlaybackClock>
+  tick: number
+  skyFromPoint: boolean // setas saem do ponto selecionado (senão, do polo)
+}
+
+export function TerrainLOD3D({ meta, exaggeration, curvature, analytic, sun, earth, marker, focus, debugLevels, onStats, onClickMap, animation }: {
   meta: TileMeta
   exaggeration: number
   curvature: number
@@ -55,14 +70,18 @@ export function TerrainLOD3D({ meta, exaggeration, curvature, analytic, sun, ear
   debugLevels: boolean
   onStats?: (s: LodStats) => void
   onClickMap?: (x_m: number, y_m: number) => void
+  animation?: LodAnimation | null
 }) {
+  const sky = animation?.series ?? null
   return (
     <div className="relative h-full">
       {(sun || earth) && (
         <div className="pointer-events-none absolute top-3 left-3 z-10 space-y-1 rounded-md bg-space-950/85 px-2.5 py-1.5 text-xs text-slate-300 backdrop-blur">
           {sun && <BodyLegend color="bg-sun-300 shadow-sun-400" name="Sol" elevation={sun.elevation_deg} />}
           {earth && <BodyLegend color="bg-ice-400 shadow-ice-400" name="Terra" elevation={earth.elevation_deg} />}
-          <div className="text-[10.5px] text-slate-500">vistos do polo · setas com elevação ampliada (×3) para visualização</div>
+          <div className="text-[10.5px] text-slate-500">
+            vistos {animation?.skyFromPoint ? 'do ponto' : 'do polo'} · setas com elevação ampliada (×3) para visualização
+          </div>
         </div>
       )}
       {/* frameloop="demand": só redesenha quando câmera, tiles ou voo mudam — parada, a cena não gasta CPU/GPU */}
@@ -70,11 +89,18 @@ export function TerrainLOD3D({ meta, exaggeration, curvature, analytic, sun, ear
         <color attach="background" args={['#07090e']} />
         <fog attach="fog" args={['#07090e', 900, 2600]} />
         <ambientLight intensity={1.1} />
-        <directionalLight position={[-300, 300, 120]} intensity={1.4} />
+        {!sky && <directionalLight position={[-300, 300, 120]} intensity={1.4} />}
         <QuadtreeTerrain meta={meta} exaggeration={exaggeration} curvature={curvature} analytic={analytic} debugLevels={debugLevels}
-                         onStats={onStats} onClickMap={onClickMap} />
-        {sun && <BodyIndicator body={sun} radiusKm={33} color="#ffd68a" size={1.1} />}
-        {earth && <BodyIndicator body={earth} radiusKm={30} color="#40c8ff" size={2.2} />}
+                         onStats={onStats} onClickMap={onClickMap} overlay={animation?.overlay ?? null} overlayBounds={animation?.bounds} />
+        {sky && animation ? (
+          <AnimatedSky series={sky} timeline={animation.timeline} clock={animation.clock} tick={animation.tick}
+                       anchor={animation.skyFromPoint ? marker ?? null : null} exaggeration={exaggeration} curvature={curvature} />
+        ) : (
+          <>
+            {sun && <BodyIndicator body={sun} radiusKm={33} color="#ffd68a" size={1.1} />}
+            {earth && <BodyIndicator body={earth} radiusKm={30} color="#40c8ff" size={2.2} />}
+          </>
+        )}
         {marker && (
           // haste radial: de 1 km abaixo a 5 km acima do ponto, ao longo da vertical local (curvada)
           <Line points={[curvedPoint(marker.x_m / 1000, marker.y_m / 1000, marker.h_m / 1000 - 1 / exaggeration, exaggeration, curvature),
