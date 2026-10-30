@@ -12,7 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lunar_navigator import illumination, ephemeris, terrain  # noqa: E402
+from lunar_navigator import ephemeris, illumination, terrain  # noqa: E402
 
 UTC = "2026-11-14 12:00:00 UTC"
 N_LOOP = 300  # pixels medidos no modo loop (o resto é extrapolado)

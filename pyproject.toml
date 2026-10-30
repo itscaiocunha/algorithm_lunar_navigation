@@ -8,3 +8,11 @@ requires-python = ">=3.12"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v"
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+# pyflakes, pycodestyle, isort, bugbear, pyupgrade: conservador, sem ruído de estilo
+select = ["E", "F", "W", "I", "B", "UP"]

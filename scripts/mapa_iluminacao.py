@@ -26,7 +26,7 @@ from rasterio.transform import from_origin  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lunar_navigator import illumination, ephemeris, terrain  # noqa: E402
+from lunar_navigator import ephemeris, illumination, terrain  # noqa: E402
 
 
 def parse_args():

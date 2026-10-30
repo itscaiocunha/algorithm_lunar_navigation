@@ -1,5 +1,5 @@
 allowBuilds:
-  '@vaadin/vaadin-usage-statistics': set this to true or false
+  '@vaadin/vaadin-usage-statistics': false # telemetria de uso no postinstall: não roda
 minimumReleaseAgeExclude:
   - '@deck.gl/aggregation-layers@9.4.1'
   - '@deck.gl/arcgis@9.4.1'

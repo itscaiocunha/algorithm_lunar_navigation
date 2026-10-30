@@ -112,7 +112,8 @@ def report(result, area, peaks):
     print(f"Janela de ouro contínua ≥ 7 dias:  {(result.longest_golden_h >= 168).sum() * pix_km2:,.2f} km²")
     print()
     a, b, c = link.DEFAULT_WEIGHTS
-    print(f"Candidatos a pouso — Score = {a:g}·janela/T + {b:g}·fração de ouro − {c:g}·pior apagão/T  (T = {link.SYNODIC_MONTH_D} d)")
+    print(f"Candidatos a pouso — Score = {a:g}·janela/T + {b:g}·fração de ouro − {c:g}·pior apagão/T  "
+          f"(T = {link.SYNODIC_MONTH_D} d)")
     print(f"{'#':>2} {'score':>7} {'lat':>9} {'lon':>8} {'alt':>6} {'janela':>8} {'ouro %':>7} {'Sol %':>6} "
           f"{'noite':>7} {'LOS':>7} {'PSR':>8}")
     for p in peaks:

@@ -1,0 +1,24 @@
+# Contexto mínimo: o código entra; os dados públicos são baixados (com SHA-256) dentro do build.
+.git
+.github
+.claude
+.venv
+venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.vscode
+.idea
+
+# frontend: compilado dentro da imagem a partir do lockfile
+frontend/node_modules
+frontend/dist
+
+# dados públicos: baixados e verificados no estágio "data"
+kernels/*
+!kernels/lunar.tm
+data/dem
+
+# saídas: só a análise anual entra (no alvo "bundle"); mapas, PNG e logs ficam de fora
+output/*
+!output/anual_*.npz

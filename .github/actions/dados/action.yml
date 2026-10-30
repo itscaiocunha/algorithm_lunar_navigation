@@ -1,0 +1,54 @@
+name: Dados do Lunar Navigator
+description: >
+  Kernels SPICE + DEM LOLA (públicos, baixados com SHA-256 e guardados em cache) e, se existirem,
+  os caches derivados (horizontes + análise anual), gerados pelo workflow "Dados derivados".
+  Requer Python configurado antes.
+
+inputs:
+  publicos:
+    description: baixar/restaurar kernels e DEM
+    default: "true"
+
+outputs:
+  derived-key:
+    description: chave do cache derivado (muda quando o algoritmo ou os dados mudam)
+    value: ${{ steps.key.outputs.key }}
+  derived-hit:
+    description: "'true' se os caches derivados foram restaurados"
+    value: ${{ steps.derived.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    # os caches derivados dependem do DEM, dos kernels e do código que os produz
+    - id: key
+      shell: bash
+      run: |
+        echo "key=derivados-v1-${{ hashFiles('scripts/baixar_dados.py', 'scripts/mapa_anual.py',
+          'src/lunar_navigator/horizon.py', 'src/lunar_navigator/illumination.py', 'src/lunar_navigator/terrain.py',
+          'src/lunar_navigator/annual.py', 'src/lunar_navigator/link.py', 'src/lunar_navigator/ephemeris.py',
+          'src/lunar_navigator/config.py') }}" >> "$GITHUB_OUTPUT"
+
+    - if: inputs.publicos == 'true'
+      uses: actions/cache@v6
+      with:
+        path: |
+          kernels/*.bsp
+          kernels/*.bpc
+          kernels/*.tpc
+          kernels/*.tf
+          kernels/*.tls
+          data/dem
+        key: dados-publicos-${{ hashFiles('scripts/baixar_dados.py') }}
+
+    - if: inputs.publicos == 'true'
+      shell: bash
+      run: python scripts/baixar_dados.py  # pula o que o cache trouxe íntegro; baixa e verifica o resto
+
+    - id: derived
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          data/cache
+          output/anual_*.npz
+        key: ${{ steps.key.outputs.key }}

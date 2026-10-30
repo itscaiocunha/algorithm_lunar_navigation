@@ -76,12 +76,17 @@ Saídas em `output/`: PNG (topografia + iluminação) e GeoTIFF georreferenciado
 
 | Método | Tempo |
 |---|---|
-| Vetorizado (NumPy), blocos de 65 536 px | ~10 s |
-| Vetorizado, toda a malha de uma vez (versão inicial) | ~14 s |
-| Mesmo código, um pixel por vez | ~33 h (extrapolado de 300 px) |
+| Vetorizado (NumPy), blocos de 65 536 px | 8,6 s |
+| Vetorizado, toda a malha de uma vez (versão inicial) | 18,3 s |
+| Vetorizado em blocos, passo fixo de 80 m (sem o passo crescente) | 24,6 s |
+| Mesmo código, um pixel por vez | ~54 min (extrapolado de 300 px) |
 
-Os três produzem resultados idênticos. Processar em blocos mantém os arrays
-temporários no cache da CPU (a operação é limitada por banda de memória).
+Remedido com `python scripts/benchmark_escada.py` (i5-12400F; detalhes e gráfico em
+[DEEP_DIVE.md](DEEP_DIVE.md)). Os três primeiros produzem resultados idênticos bit a bit.
+Processar em blocos mantém os arrays temporários no cache da CPU (a operação é limitada por
+banda de memória). A versão anterior desta tabela dizia ~33 h para o laço pixel a pixel: a primeira
+versão de `_march` recalculava o máximo do DEM inteiro a cada chamada (132 ms), um custo fixo
+alheio ao ray-casting que inflava a referência.
 A elevação do Sol calculada pelo motor vetorizado coincide com a do
 `ephemeris.py`/SPICE até 10⁻⁶ grau.
 
@@ -110,7 +115,7 @@ A elevação do Sol calculada pelo motor vetorizado coincide com a do
 
 ## Método de horizontes
 
-Iterar o motor direto a cada 12 h em 2027 custaria 730 × ~10 s ≈ 2 h, sem
+Iterar o motor direto a cada 12 h em 2027 custaria 730 × 8,6 s ≈ 1,7 h só para o Sol, sem
 reaproveitamento. Como o relevo não muda, `horizon.py` calcula **uma vez** o
 horizonte de cada pixel em 180 azimutes (passo de 2°), com o mesmo
 ray-marching vetorizado em raios horizontais, e guarda em
@@ -126,7 +131,8 @@ em ~0,1 s para os 562 500 pixels (Mazarico et al., 2011).
   de elevação; horizontes fora de ±(colatitude + 1,9°) são cortados, o que
   permite encerrar os raios cedo sem alterar o resultado.
 - **Paralelismo:** azimutes independentes → `ProcessPoolExecutor` (6 processos).
-- **Custo medido:** pré-cálculo 869 s (uma vez); 730 instantes em 85 s.
+- **Custo medido:** pré-cálculo 2038 s (uma vez, 12 threads, com o teto de 8,5° que cobre a
+  Terra; o primeiro cache, só para o Sol, levava 869 s); depois, 106 ms por instante e corpo.
 
 ### Validação contra o motor direto
 

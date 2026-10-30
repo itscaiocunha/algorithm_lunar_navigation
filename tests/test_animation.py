@@ -47,6 +47,15 @@ def test_frame_preserves_states_of_full_map(client):
     assert np.mean((frame >> 4 > 0) != (sun > 0)) < 1e-3  # só as frações minúsculas divergem
 
 
+def test_frame_is_gzipped_but_png_tiles_are_not(client):
+    """Deploy remoto: o quadro trafega comprimido (~8×); PNG já comprimido passa direto."""
+    r = client.get("/api/map/frame", params={"utc": UTC}, headers={"Accept-Encoding": "gzip"})
+    assert r.headers.get("content-encoding") == "gzip"
+    assert int(r.headers["content-length"]) < len(r.content) / 4  # bytes no fio vs. decodificados
+    t = client.get("/api/tiles/0/0/0/relief.png", headers={"Accept-Encoding": "gzip"})
+    assert t.status_code == 200 and "content-encoding" not in t.headers
+
+
 def test_ephemeris_center_matches_map_payload(client):
     e = client.get("/api/ephemeris", params={"start": UTC, "hours": 24, "step_min": 60}).json()
     assert e["n"] == 25 and e["step_s"] == 3600
@@ -112,7 +121,7 @@ def test_point_horizon_constant_for_fixed_direction(client):
     """Margem = elevação − horizonte + raio (consistência interna da série)."""
     e = client.get("/api/ephemeris", params={"start": UTC, "hours": 6, "step_min": 60, **SITE}).json()
     s = e["point"]["sun"]
-    for el, hor, vis, full in zip(s["elevation_deg"], s["horizon_deg"], s["margin_deg"], s["margin_full_deg"]):
+    for el, hor, vis, full in zip(s["elevation_deg"], s["horizon_deg"], s["margin_deg"], s["margin_full_deg"], strict=True):
         assert vis - full == pytest.approx(2 * 0.2666, abs=0.01)  # diâmetro do disco solar
         assert (vis + full) / 2 == pytest.approx(el - hor, abs=2e-4)
 

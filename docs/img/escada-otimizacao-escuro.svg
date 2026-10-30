@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="330" viewBox="0 0 820 330" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Tempo de cálculo de luz e sombra por instante</title>
+<desc id="d">Laço em Python, pixel a pixel (mesmo código, um pixel por chamada): 54 min; NumPy, malha inteira (laço sobre a distância, não sobre o pixel): 18,3 s; NumPy em blocos de 65 536 px (idêntico às duas acima, bit a bit): 8,6 s; Mapa de horizontes (pré-cálculo único de 34 min · ~99,8% igual): 106 ms</desc>
+<rect width="820" height="330" rx="10" fill="#1a1a19"/>
+<text x="24" y="36" font-size="17" font-weight="600" fill="#f0efec">Tempo para calcular luz e sombra de um instante</text>
+<text x="24" y="58" font-size="12.5" fill="#c3c2b7">562.500 pixels de 80 m ao redor do polo sul · escala logarítmica</text>
+<line x1="314.5" x2="314.5" y1="84" y2="266" stroke="#2c2c2a" stroke-width="1"/>
+<text x="314.5" y="284" font-size="11.5" fill="#898781" text-anchor="middle">0,1 s</text>
+<line x1="395.9" x2="395.9" y1="84" y2="266" stroke="#2c2c2a" stroke-width="1"/>
+<text x="395.9" y="284" font-size="11.5" fill="#898781" text-anchor="middle">1 s</text>
+<line x1="477.4" x2="477.4" y1="84" y2="266" stroke="#2c2c2a" stroke-width="1"/>
+<text x="477.4" y="284" font-size="11.5" fill="#898781" text-anchor="middle">10 s</text>
+<line x1="540.7" x2="540.7" y1="84" y2="266" stroke="#2c2c2a" stroke-width="1"/>
+<text x="540.7" y="284" font-size="11.5" fill="#898781" text-anchor="middle">1 min</text>
+<line x1="622.1" x2="622.1" y1="84" y2="266" stroke="#2c2c2a" stroke-width="1"/>
+<text x="622.1" y="284" font-size="11.5" fill="#898781" text-anchor="middle">10 min</text>
+<line x1="685.5" x2="685.5" y1="84" y2="266" stroke="#2c2c2a" stroke-width="1"/>
+<text x="685.5" y="284" font-size="11.5" fill="#898781" text-anchor="middle">1 h</text>
+<line x1="290" x2="290" y1="84" y2="266" stroke="#383835" stroke-width="1"/>
+<text x="276" y="101" font-size="13" font-weight="600" fill="#f0efec" text-anchor="end">Laço em Python, pixel a pixel</text>
+<text x="276" y="117" font-size="11.5" fill="#c3c2b7" text-anchor="end">mesmo código, um pixel por chamada</text>
+<path d="M290.0,92.0 H677.6 Q681.6,92.0 681.6,96.0 V108.0 Q681.6,112.0 677.6,112.0 H290.0 Z" fill="#3987e5"/>
+<text x="689.6" y="107" font-size="13" font-weight="600" fill="#f0efec">54 min</text>
+<text x="276" y="147" font-size="13" font-weight="600" fill="#f0efec" text-anchor="end">NumPy, malha inteira</text>
+<text x="276" y="163" font-size="11.5" fill="#c3c2b7" text-anchor="end">laço sobre a distância, não sobre o pixel</text>
+<path d="M290.0,138.0 H494.8 Q498.8,138.0 498.8,142.0 V154.0 Q498.8,158.0 494.8,158.0 H290.0 Z" fill="#3987e5"/>
+<text x="506.8" y="153" font-size="13" font-weight="600" fill="#f0efec">18,3 s</text>
+<text x="276" y="193" font-size="13" font-weight="600" fill="#f0efec" text-anchor="end">NumPy em blocos de 65 536 px</text>
+<text x="276" y="209" font-size="11.5" fill="#c3c2b7" text-anchor="end">idêntico às duas acima, bit a bit</text>
+<path d="M290.0,184.0 H468.0 Q472.0,184.0 472.0,188.0 V200.0 Q472.0,204.0 468.0,204.0 H290.0 Z" fill="#3987e5"/>
+<text x="480.0" y="199" font-size="13" font-weight="600" fill="#f0efec">8,6 s</text>
+<text x="276" y="239" font-size="13" font-weight="600" fill="#f0efec" text-anchor="end">Mapa de horizontes</text>
+<text x="276" y="255" font-size="11.5" fill="#c3c2b7" text-anchor="end">pré-cálculo único de 34 min · ~99,8% igual</text>
+<path d="M290.0,230.0 H312.6 Q316.6,230.0 316.6,234.0 V246.0 Q316.6,250.0 312.6,250.0 H290.0 Z" fill="#3987e5"/>
+<text x="324.6" y="245" font-size="13" font-weight="600" fill="#f0efec">106 ms</text>
+</svg>

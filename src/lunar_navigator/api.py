@@ -11,9 +11,11 @@ from pathlib import Path
 import numpy as np
 import spiceypy as spice
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
 
 from lunar_navigator import __version__, config
 
@@ -35,6 +37,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Lunar Navigator", version=__version__, lifespan=lifespan)
+# gzip para JSON e binários (quadro da animação: 549 KB -> 65 KB em ~8 ms); PNG e GeoTIFF já vêm
+# comprimidos e só gastariam CPU
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5,
+                   exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, "image/png", "image/tiff"))
 
 
 class Vector3(BaseModel):

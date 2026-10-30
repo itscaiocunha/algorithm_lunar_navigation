@@ -50,7 +50,7 @@ export function LoadingNarrative({ mode, expectedSeconds }: { mode: MapMode; exp
           })}
         </ol>
         <p className="mt-5 text-xs leading-relaxed text-slate-500">
-          Pixel a pixel, este cálculo levaria ~33 horas em Python. Vetorizado com NumPy, cada passo é uma única
+          Pixel a pixel, só o Sol levaria ~54 minutos em Python. Vetorizado com NumPy, cada passo é uma única
           operação sobre meio milhão de raios.
         </p>
       </div>

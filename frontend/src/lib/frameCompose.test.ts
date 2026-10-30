@@ -5,7 +5,7 @@ import { COLORS } from './layers'
 // 4 pixels: sombra total · só Sol (disco inteiro) · só Terra (disco inteiro) · Sol + Terra
 const frame = { utc: 'x', rows: 1, cols: 4, bytes: new Uint8Array([0x00, 0xf0, 0x0f, 0xff]) }
 const all = { sun: true, earth: true, golden: true }
-const px = (rgba: Uint8ClampedArray, width: number, x: number, y = 0) => [...rgba.slice((y * width + x) * 4, (y * width + x) * 4 + 4)]
+const px = (rgba: Uint8ClampedArray, width: number, x: number, y = 0) => Array.from(rgba.subarray((y * width + x) * 4, (y * width + x) * 4 + 4))
 
 describe('composeFrame', () => {
   it('estatísticas da área', () => {

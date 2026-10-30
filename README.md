@@ -1,7 +1,12 @@
 # Lunar Navigator
 
+[![CI](https://github.com/itscaiocunha/algorithm_lunar_navigation/actions/workflows/ci.yml/badge.svg)](https://github.com/itscaiocunha/algorithm_lunar_navigation/actions/workflows/ci.yml)
+
 Projeto algorítmico de navegação lunar em Python, usando **NumPy**,
 **SpiceyPy** (NASA/NAIF SPICE) e **FastAPI**.
+
+**Deep dive:** [De 54 minutos a 106 milissegundos](docs/DEEP_DIVE.md), como o cálculo de oclusão
+topográfica de 562 500 pixels foi vetorizado e reduzido a uma consulta por instante.
 
 ## Estrutura
 
@@ -23,10 +28,13 @@ alg_lunar_navigator/
 ├── kernels/               # kernels SPICE (não versionados, exceto lunar.tm)
 ├── data/dem/              # DEMs LOLA (não versionados)
 ├── output/                # mapas gerados (não versionados)
-├── docs/                  # BIBLIOTECAS.md, ILUMINACAO.md
+├── docs/                  # BIBLIOTECAS, ILUMINACAO, DEEP_DIVE, DEPLOY, REFERENCIAS
+├── .github/               # CI (ci.yml), dados derivados (dados.yml), release (release.yml)
+├── Dockerfile             # multi-estágio: runtime e bundle
+├── compose.yaml           # execução local em contêiner + pré-cálculo
 ├── requirements.txt       # dependências de execução
-├── requirements-dev.txt   # + dependências de teste
-└── pyproject.toml         # metadados e config do pytest
+├── requirements-dev.txt   # + dependências de teste e lint (pytest, ruff)
+└── pyproject.toml         # metadados e config do pytest e do ruff
 ```
 
 ## Configuração (Windows / PowerShell)
@@ -39,11 +47,18 @@ py -3.12 -m venv .venv
 pip install -r requirements-dev.txt
 ```
 
+Baixe os dados de entrada (kernels SPICE + DEM LOLA, ~322 MB, com verificação SHA-256):
+
+```powershell
+python scripts/baixar_dados.py
+```
+
 ## Verificar o ambiente
 
 ```powershell
 python scripts/check_env.py   # importa e mostra versões
-pytest                        # roda os testes de NumPy, SpiceyPy e FastAPI
+pytest                        # 138 testes (os do modo rápido exigem scripts/mapa_anual.py)
+ruff check src tests scripts  # lint
 ```
 
 ## Executar a API
@@ -82,8 +97,21 @@ python scripts\servidor.py     # sobe a API e abre http://127.0.0.1:8000 no nave
 O modo rápido e a aba anual exigem rodar `scripts/mapa_anual.py` uma vez (gera os caches).
 Para desenvolver o frontend com recarga automática, veja [frontend/README.md](frontend/README.md).
 
+## Contêiner
+
+```powershell
+docker compose up --build              # http://localhost:8000
+docker compose run --rm precalculo     # horizontes + análise anual (uma vez)
+```
+
+Imagem multi-estágio com dados verificados por hash, usuário sem privilégios e healthcheck. O CI
+(GitHub Actions) roda lint, tipos e testes do frontend e do backend, e faz o build e o smoke test
+do contêiner a cada push. Detalhes, medições e deploy em nuvem em [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Documentação
 
 - [docs/BIBLIOTECAS.md](docs/BIBLIOTECAS.md): cada biblioteca, conceitos e exemplos.
 - [docs/ILUMINACAO.md](docs/ILUMINACAO.md): dados, algoritmo, desempenho e limitações do mapa de iluminação.
 - [docs/REFERENCIAS.md](docs/REFERENCIAS.md): fontes dos dados, artigos científicos e software, com DOIs.
+- [docs/DEEP_DIVE.md](docs/DEEP_DIVE.md): a escada de otimizações, medida degrau a degrau.
+- [docs/DEPLOY.md](docs/DEPLOY.md): Docker, CI/CD e deploy em nuvem.

@@ -1,0 +1,26 @@
+# Execução local em contêiner:
+#   docker compose up --build            # http://localhost:8000
+#   docker compose run --rm precalculo   # gera horizontes + análise anual 2027 (~30–60 min, uma vez)
+#
+# Os caches derivados ficam em ./data/cache e ./output do host (montados), então o mesmo
+# pré-cálculo serve ao venv local e ao contêiner, e sobrevive a rebuilds da imagem.
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    image: lunar-navigator:runtime
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/cache:/app/data/cache
+      - ./output:/app/output
+    restart: unless-stopped
+
+  precalculo:
+    image: lunar-navigator:runtime
+    profiles: [tools]
+    command: ["python", "scripts/mapa_anual.py"]
+    volumes:
+      - ./data/cache:/app/data/cache
+      - ./output:/app/output

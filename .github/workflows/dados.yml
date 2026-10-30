@@ -1,0 +1,48 @@
+name: Dados derivados
+
+# Horizontes (180 azimutes × 562 500 px) + análise anual 2027: ~34 min em 12 núcleos, 1–2 h num
+# runner de 4 vCPU. Roda só quando o cache não existe para a versão atual do algoritmo; o resultado
+# é guardado no cache do GitHub e restaurado pelo CI (suíte completa) e pelo release (imagem bundle).
+# O agendamento semanal mantém o cache "quente" (entradas sem acesso por 7 dias são removidas).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # segundas, 06:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  derivados:
+    name: Horizontes + análise anual
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements.txt
+      - id: dados
+        uses: ./.github/actions/dados
+      - name: Pré-cálculo (só se o cache não existir)
+        if: steps.dados.outputs.derived-hit != 'true'
+        run: python scripts/mapa_anual.py --validar 2
+      - if: steps.dados.outputs.derived-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            data/cache
+            output/anual_*.npz
+          key: ${{ steps.dados.outputs.derived-key }}
+      - name: Resumo
+        run: |
+          {
+            echo "### Dados derivados"
+            echo "Chave: \`${{ steps.dados.outputs.derived-key }}\`"
+            echo "Já existiam: ${{ steps.dados.outputs.derived-hit == 'true' }}"
+            du -h data/cache/* output/anual_*.npz | sed 's/^/    /'
+          } >> "$GITHUB_STEP_SUMMARY"

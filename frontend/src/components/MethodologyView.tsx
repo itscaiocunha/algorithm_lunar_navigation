@@ -48,18 +48,20 @@ export function MethodologyView() {
         ))}
       </ol>
 
-      <Section title="Por que o cálculo completo leva ~10 segundos?">
+      <Section title="Por que o ray-casting completo leva segundos, e não uma hora?">
         O mapa tem <b>562 500 pixels</b>. Para cada um, o programa responde: <i>“existe alguma montanha entre este ponto e o
         Sol?”</i>. O raio avança em passos — 80 m perto, crescendo 1% a cada passo — por até <b>~400 passos</b>: centenas de
-        milhões de consultas ao relevo. Tratando um pixel por vez em Python, o mesmo cálculo levaria <b>~33 horas</b>. Com
-        NumPy, todos os raios avançam juntos, e o processamento em blocos de 65 536 pixels mantém os dados no cache da CPU.
+        milhões de consultas ao relevo. Tratando um pixel por vez em Python, só o Sol levaria <b>~54 minutos</b>. Com NumPy,
+        todos os raios avançam juntos (18 s), e o processamento em blocos de 65 536 pixels, que mantém os dados no cache da CPU,
+        baixa para <b>8,6 s</b>, com resultado idêntico bit a bit.
       </Section>
 
       <Section title="O modo rápido e a análise anual">
         O relevo não muda; só o Sol se move. Por isso calculamos <b>uma vez</b> o horizonte de cada pixel em 180 direções
-        (o mesmo ray-casting, ~15 min em 6 processos) e guardamos. Depois, qualquer instante é só comparar a elevação do Sol com
-        o horizonte na direção dele: <b>&lt; 1 s</b>. O ano de 2027, a cada 12 h, sai em ~1,5 minuto em vez de ~2 horas
-        (método de Mazarico et al., 2011).
+        (o mesmo ray-casting, ~34 min em 12 threads, com teto que cobre a Terra) e guardamos. Depois, qualquer instante é só
+        comparar a elevação do Sol com o horizonte na direção dele: <b>~0,1 s</b>, com 99,8–99,9% dos pixels iguais ao cálculo
+        completo. Para o Sol em 2027, a cada 12 h, isso dá ~35 min com o pré-cálculo incluído, contra ~1,7 h vetorizado e ~27
+        dias pixel a pixel (método de Mazarico et al., 2011).
       </Section>
 
       <Section title="Comunicação direta com a Terra (DTE)">
