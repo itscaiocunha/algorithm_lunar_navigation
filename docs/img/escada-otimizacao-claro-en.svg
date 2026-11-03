@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="330" viewBox="0 0 820 330" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Light and shadow computation time per instant</title>
+<desc id="d">Python loop, pixel by pixel (same code, one pixel per call): 54 min; NumPy, whole grid (loop over distance, not over pixels): 18.3 s; NumPy in blocks of 65,536 px (bit-for-bit identical to the two above): 8.6 s; Horizon map (one-time 34-min precomputation · ~99.8% equal): 106 ms</desc>
+<rect width="820" height="330" rx="10" fill="#fcfcfb"/>
+<text x="24" y="36" font-size="17" font-weight="600" fill="#0b0b0b">Time to compute light and shadow for one instant</text>
+<text x="24" y="58" font-size="12.5" fill="#52514e">562,500 pixels of 80 m around the south pole · logarithmic scale</text>
+<line x1="314.5" x2="314.5" y1="84" y2="266" stroke="#e1e0d9" stroke-width="1"/>
+<text x="314.5" y="284" font-size="11.5" fill="#898781" text-anchor="middle">0.1 s</text>
+<line x1="395.9" x2="395.9" y1="84" y2="266" stroke="#e1e0d9" stroke-width="1"/>
+<text x="395.9" y="284" font-size="11.5" fill="#898781" text-anchor="middle">1 s</text>
+<line x1="477.4" x2="477.4" y1="84" y2="266" stroke="#e1e0d9" stroke-width="1"/>
+<text x="477.4" y="284" font-size="11.5" fill="#898781" text-anchor="middle">10 s</text>
+<line x1="540.7" x2="540.7" y1="84" y2="266" stroke="#e1e0d9" stroke-width="1"/>
+<text x="540.7" y="284" font-size="11.5" fill="#898781" text-anchor="middle">1 min</text>
+<line x1="622.1" x2="622.1" y1="84" y2="266" stroke="#e1e0d9" stroke-width="1"/>
+<text x="622.1" y="284" font-size="11.5" fill="#898781" text-anchor="middle">10 min</text>
+<line x1="685.5" x2="685.5" y1="84" y2="266" stroke="#e1e0d9" stroke-width="1"/>
+<text x="685.5" y="284" font-size="11.5" fill="#898781" text-anchor="middle">1 h</text>
+<line x1="290" x2="290" y1="84" y2="266" stroke="#c3c2b7" stroke-width="1"/>
+<text x="276" y="101" font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="end">Python loop, pixel by pixel</text>
+<text x="276" y="117" font-size="11.5" fill="#52514e" text-anchor="end">same code, one pixel per call</text>
+<path d="M290.0,92.0 H677.6 Q681.6,92.0 681.6,96.0 V108.0 Q681.6,112.0 677.6,112.0 H290.0 Z" fill="#2a78d6"/>
+<text x="689.6" y="107" font-size="13" font-weight="600" fill="#0b0b0b">54 min</text>
+<text x="276" y="147" font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="end">NumPy, whole grid</text>
+<text x="276" y="163" font-size="11.5" fill="#52514e" text-anchor="end">loop over distance, not over pixels</text>
+<path d="M290.0,138.0 H494.8 Q498.8,138.0 498.8,142.0 V154.0 Q498.8,158.0 494.8,158.0 H290.0 Z" fill="#2a78d6"/>
+<text x="506.8" y="153" font-size="13" font-weight="600" fill="#0b0b0b">18.3 s</text>
+<text x="276" y="193" font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="end">NumPy in blocks of 65,536 px</text>
+<text x="276" y="209" font-size="11.5" fill="#52514e" text-anchor="end">bit-for-bit identical to the two above</text>
+<path d="M290.0,184.0 H468.0 Q472.0,184.0 472.0,188.0 V200.0 Q472.0,204.0 468.0,204.0 H290.0 Z" fill="#2a78d6"/>
+<text x="480.0" y="199" font-size="13" font-weight="600" fill="#0b0b0b">8.6 s</text>
+<text x="276" y="239" font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="end">Horizon map</text>
+<text x="276" y="255" font-size="11.5" fill="#52514e" text-anchor="end">one-time 34-min precomputation · ~99.8% equal</text>
+<path d="M290.0,230.0 H312.6 Q316.6,230.0 316.6,234.0 V246.0 Q316.6,250.0 312.6,250.0 H290.0 Z" fill="#2a78d6"/>
+<text x="324.6" y="245" font-size="13" font-weight="600" fill="#0b0b0b">106 ms</text>
+</svg>

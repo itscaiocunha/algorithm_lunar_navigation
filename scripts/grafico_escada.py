@@ -1,13 +1,15 @@
 """Gera o gráfico da "escada" de otimizações (SVG claro e escuro) a partir de output/benchmark_escada.json.
 
-Uso:  python scripts/benchmark_escada.py   # mede (uma vez)
-      python scripts/grafico_escada.py     # -> docs/img/escada-otimizacao-{claro,escuro}.svg
+Uso:  python scripts/benchmark_escada.py      # mede (uma vez)
+      python scripts/grafico_escada.py        # -> docs/img/escada-otimizacao-{claro,escuro}.svg
+      python scripts/grafico_escada.py en     # -> docs/img/escada-otimizacao-{claro,escuro}-en.svg
 
 Barras horizontais em escala log (um só tom: é uma única série; o valor fica na ponta da barra).
 """
 
 import json
 import math
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,14 +22,31 @@ THEMES = {  # tokens do guia de visualização: superfície, tintas, grade e a c
 }
 W, LEFT, PLOT_W, TOP, ROW, BAR = 820, 290, 420, 92, 46, 20
 DOMAIN = (0.05, 7200.0)  # s
-TICKS = [(0.1, "0,1 s"), (1, "1 s"), (10, "10 s"), (60, "1 min"), (600, "10 min"), (3600, "1 h")]
+LANG = sys.argv[1] if len(sys.argv) > 1 else "pt"
+TXT = {
+    "pt": dict(dec=",", thou=".", title="Tempo para calcular luz e sombra de um instante",
+               a11y="Tempo de cálculo de luz e sombra por instante",
+               sub="{px} pixels de 80 m ao redor do polo sul · escala logarítmica", suffix="",
+               rows=[("Laço em Python, pixel a pixel", "mesmo código, um pixel por chamada"),
+                     ("NumPy, malha inteira", "laço sobre a distância, não sobre o pixel"),
+                     ("NumPy em blocos de 65 536 px", "idêntico às duas acima, bit a bit"),
+                     ("Mapa de horizontes", "pré-cálculo único de {pre} min · ~99,8% igual")]),
+    "en": dict(dec=".", thou=",", title="Time to compute light and shadow for one instant",
+               a11y="Light and shadow computation time per instant",
+               sub="{px} pixels of 80 m around the south pole · logarithmic scale", suffix="-en",
+               rows=[("Python loop, pixel by pixel", "same code, one pixel per call"),
+                     ("NumPy, whole grid", "loop over distance, not over pixels"),
+                     ("NumPy in blocks of 65,536 px", "bit-for-bit identical to the two above"),
+                     ("Horizon map", "one-time {pre}-min precomputation · ~99.8% equal")]),
+}[LANG]
+TICKS = [(0.1, f"0{TXT['dec']}1 s"), (1, "1 s"), (10, "10 s"), (60, "1 min"), (600, "10 min"), (3600, "1 h")]
 
 
 def fmt(s: float) -> str:
     if s < 1:
         return f"{s * 1000:.0f} ms"
     if s < 60:
-        return f"{s:.1f} s".replace(".", ",")
+        return f"{s:.1f} s".replace(".", TXT["dec"])
     return f"{s / 60:.0f} min"
 
 
@@ -48,13 +67,12 @@ def svg(rows: list[tuple[str, str, float]], t: dict, pixels: int) -> str:
     font = "font-family=\"-apple-system,'Segoe UI',Helvetica,Arial,sans-serif\""
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{h}" viewBox="0 0 {W} {h}" {font} '
            f'role="img" aria-labelledby="t d">',
-           '<title id="t">Tempo de cálculo de luz e sombra por instante</title>',
+           f'<title id="t">{TXT["a11y"]}</title>',
            '<desc id="d">' + "; ".join(f"{a} ({b}): {fmt(s)}" for a, b, s in rows) + "</desc>",
            f'<rect width="{W}" height="{h}" rx="10" fill="{t["surface"]}"/>',
-           f'<text x="24" y="36" font-size="17" font-weight="600" fill="{t["ink"]}">'
-           'Tempo para calcular luz e sombra de um instante</text>',
-           f'<text x="24" y="58" font-size="12.5" fill="{t["ink2"]}">{pixels:,} pixels de 80 m ao redor do polo sul · '
-           'escala logarítmica</text>'.replace(",", ".")]
+           f'<text x="24" y="36" font-size="17" font-weight="600" fill="{t["ink"]}">{TXT["title"]}</text>',
+           f'<text x="24" y="58" font-size="12.5" fill="{t["ink2"]}">'
+           + TXT["sub"].format(px=f"{pixels:,}".replace(",", TXT["thou"])) + "</text>"]
     bottom = TOP + ROW * len(rows) - 10
     for s, label in TICKS:  # grade: hairline sólida, recessiva
         out.append(f'<line x1="{x(s):.1f}" x2="{x(s):.1f}" y1="{TOP - 8}" y2="{bottom}" stroke="{t["grid"]}" stroke-width="1"/>')
@@ -75,17 +93,13 @@ def svg(rows: list[tuple[str, str, float]], t: dict, pixels: int) -> str:
 def main():
     b = json.loads((ROOT / "output" / "benchmark_escada.json").read_text(encoding="utf-8"))
     pre_min = round(b["horizontes_precalculo_s"] / 60)
-    rows = [
-        ("Laço em Python, pixel a pixel", "mesmo código, um pixel por chamada", b["pixel_a_pixel_s"]),
-        ("NumPy, malha inteira", "laço sobre a distância, não sobre o pixel", b["vetorizado_inteiro_s"]),
-        ("NumPy em blocos de 65 536 px", "idêntico às duas acima, bit a bit", b["vetorizado_blocos_s"]),
-        ("Mapa de horizontes", f"pré-cálculo único de {pre_min} min · ~99,8% igual", b["horizontes_por_instante_s"]),
-    ]
+    times = [b["pixel_a_pixel_s"], b["vetorizado_inteiro_s"], b["vetorizado_blocos_s"], b["horizontes_por_instante_s"]]
+    rows = [(name, detail.format(pre=pre_min), s) for (name, detail), s in zip(TXT["rows"], times, strict=True)]
     dest = ROOT / "docs" / "img"
     dest.mkdir(parents=True, exist_ok=True)
     for name, theme in THEMES.items():
-        (dest / f"escada-otimizacao-{name}.svg").write_text(svg(rows, theme, b["pixels"]), encoding="utf-8")
-        print(f"-> docs/img/escada-otimizacao-{name}.svg")
+        (dest / f"escada-otimizacao-{name}{TXT['suffix']}.svg").write_text(svg(rows, theme, b["pixels"]), encoding="utf-8")
+        print(f"-> docs/img/escada-otimizacao-{name}{TXT['suffix']}.svg")
 
 
 if __name__ == "__main__":

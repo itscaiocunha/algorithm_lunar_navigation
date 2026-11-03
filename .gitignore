@@ -22,3 +22,6 @@ output/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Relatório (dependências do Node)
+relatorio/
